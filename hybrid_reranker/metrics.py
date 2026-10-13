@@ -50,12 +50,14 @@ def query_metrics(query, result, answers=False):
     metrics = ranking_metrics(result["ranking"], query["qrels"])
     metrics["support_recall@5"] = support_recall(result["context"], query["supporting_facts"])
     metrics["llm_fraction"] = float(result["llm_called"])
+    metrics["llm_failed"] = float(result.get("llm_failed", False))
     usage = result["rerank_usage"]
     metrics["rerank_input_tokens"] = usage.get("prompt_tokens", 0)
     metrics["rerank_output_tokens"] = usage.get("completion_tokens", 0)
     metrics["rerank_total_tokens"] = usage.get("total_tokens", 0)
     if answers:
         metrics.update(answer_metrics(result["answer"], query["answer"]))
+        metrics["answer_failed"] = float(result.get("answer_failed", False))
         usage = result["answer_usage"]
         metrics["answer_input_tokens"] = usage["prompt_tokens"]
         metrics["answer_output_tokens"] = usage["completion_tokens"]

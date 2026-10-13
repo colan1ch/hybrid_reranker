@@ -18,6 +18,9 @@ def retrieve(config):
         print(f"Candidates already saved: {output}")
         return
     queries = read_jsonl(run_dir / "validation.jsonl") + read_jsonl(run_dir / "test.jsonl")
+    if not queries:
+        print(f"No queries in {run_dir}. Run `rerank prepare` first.")
+        return
     corpus_path = download(
         config, "BeIR/hotpotqa", "corpus/corpus-00000-of-00001.parquet", "beir_revision",
     )

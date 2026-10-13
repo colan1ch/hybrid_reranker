@@ -1,4 +1,5 @@
 import argparse
+import os
 import platform
 import shutil
 import tomllib
@@ -7,6 +8,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .checks import VOLATILE_KEYS, comparable, needs_api, prerequisites
 from .io import write_json
 
 
@@ -22,6 +24,11 @@ def main():
         command.add_argument("--split", choices=["validation", "test"], default="test")
         command.add_argument("--method", choices=[*methods, "all"], default="all")
         command.add_argument("--answers", action="store_true")
+        if name == "run":
+            command.add_argument(
+                "--allow-api", action="store_true",
+                help="confirm that the Groq account is on the free plan; required for anything that calls the API",
+            )
     args = parser.parse_args()
     load_dotenv()
     config_path = Path(args.config)
@@ -29,10 +36,15 @@ def main():
     run_dir = Path(config["run_dir"])
     run_dir.mkdir(parents=True, exist_ok=True)
     snapshot = run_dir / "config.toml"
-    if snapshot.exists() and tomllib.loads(snapshot.read_text()) != config:
-        print("Config changed. Set a new run_dir to keep experiment results separate.")
-        return
-    if not snapshot.exists():
+    if snapshot.exists():
+        saved = tomllib.loads(snapshot.read_text())
+        if comparable(saved) != comparable(config):
+            print("Config changed. Set a new run_dir to keep experiment results separate.")
+            return
+        changed = [key for key in VOLATILE_KEYS if saved.get(key) != config.get(key)]
+        if changed:
+            print(f"Note: {', '.join(changed)} differs from the saved config; it affects speed only, so the run continues.")
+    else:
         shutil.copyfile(config_path, snapshot)
         write_json(run_dir / "environment.json", {
             "python": platform.python_version(),
@@ -41,6 +53,19 @@ def main():
                 "torch", "groq", "tiktoken",
             ]},
         })
+    selected = methods if getattr(args, "method", None) == "all" else [getattr(args, "method", None)]
+    message = prerequisites(args.command, run_dir, getattr(args, "split", None), getattr(args, "method", None), selected)
+    if message:
+        print(message)
+        return
+    if needs_api(args.command, args.method if args.command == "run" else "", getattr(args, "answers", False)) and not (
+        args.allow_api or os.environ.get("RERANK_ALLOW_API") == "1"
+    ):
+        print(
+            "This command can send requests to the Groq API. Check in the Groq console that the account is on the "
+            "Free plan with no payment method, then repeat with --allow-api (or set RERANK_ALLOW_API=1)."
+        )
+        return
     if args.command == "prepare":
         from .data import prepare
         prepare(config)
@@ -49,7 +74,7 @@ def main():
         retrieve(config)
     elif args.command == "run":
         from .run import run
-        for method in methods if args.method == "all" else [args.method]:
+        for method in selected:
             if not run(config, args.split, method, args.answers):
                 break
     elif args.command == "tune":
@@ -57,4 +82,4 @@ def main():
         tune(config)
     else:
         from .evaluate import evaluate
-        evaluate(config, args.split, methods if args.method == "all" else [args.method], args.answers)
+        evaluate(config, args.split, selected, args.answers)

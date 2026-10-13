@@ -32,6 +32,9 @@ def tune(config):
         print(f"Thresholds already frozen: {output}")
         return
     queries = read_jsonl(run_dir / "validation.jsonl")
+    if not queries:
+        print(f"No validation queries in {run_dir}. Run `rerank prepare` first.")
+        return
     bert = complete_results(run_dir / "validation.bert.jsonl", queries)
     llm = complete_results(run_dir / "validation.llm.jsonl", queries)
     if bert is None or llm is None:
@@ -68,6 +71,9 @@ def tune(config):
 def evaluate(config, split, methods, answers=False):
     run_dir = Path(config["run_dir"])
     queries = read_jsonl(run_dir / f"{split}.jsonl")
+    if not queries:
+        print(f"No {split} queries in {run_dir}. Run `rerank prepare` first.")
+        return
     results = {method: complete_results(run_dir / f"{split}.{method}.jsonl", queries, answers) for method in methods}
     if any(rows is None for rows in results.values()):
         return
@@ -80,14 +86,18 @@ def evaluate(config, split, methods, answers=False):
     rng = np.random.default_rng(config["seed"])
     indices = rng.integers(len(queries), size=(config["bootstrap_samples"], len(queries)))
     means, differences = [], []
+    references = [name for name in ("llm", "bert") if name in arrays]
     for method, values in arrays.items():
         means.append({"method": method, "queries": len(queries), **dict(zip(keys, values.mean(axis=0).tolist()))})
-        if "llm" in arrays:
-            delta = values - arrays["llm"]
+        for reference in references:
+            if method == reference:
+                continue
+            delta = values - arrays[reference]
             interval = np.quantile(delta[indices].mean(axis=1), [0.025, 0.975], axis=0)
             for index, key in enumerate(keys):
                 differences.append({
-                    "method": method, "metric": key, "difference_vs_llm": float(delta[:, index].mean()),
+                    "method": method, "reference": reference, "metric": key,
+                    "difference": float(delta[:, index].mean()),
                     "ci95_low": float(interval[0, index]), "ci95_high": float(interval[1, index]),
                 })
     write_jsonl(run_dir / f"{split}.metrics.jsonl", [
@@ -100,4 +110,4 @@ def evaluate(config, split, methods, answers=False):
     write_json(run_dir / f"{split}.summary.json", {"means": means, "paired_bootstrap": differences})
     for row in means:
         print(f"{row['method']:16} nDCG={row['ndcg@10']:.4f} Recall={row['recall@20']:.4f} "
-              f"LLM={row['llm_fraction']:.1%} tokens/query={row['rerank_total_tokens']:.1f}")
+              f"LLM={row['llm_fraction']:.1%} failed={row['llm_failed']:.1%} tokens/query={row['rerank_total_tokens']:.1f}")

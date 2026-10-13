@@ -1,4 +1,5 @@
 import csv
+import json
 import random
 from collections import Counter, defaultdict
 from itertools import zip_longest
@@ -47,13 +48,28 @@ def sample_queries(rows, size, seed):
     return selected
 
 
+def usable_facts(row, context):
+    """Supporting facts of a HotpotQA row, or None if one of them points outside its paragraph.
+
+    A few rows in the source data name a sentence that does not exist (for example sentence 20 of a
+    two-sentence paragraph). Such questions cannot be scored on supporting facts, so they are skipped.
+    """
+    facts = []
+    for title, index in zip(row["supporting_facts"]["title"], row["supporting_facts"]["sent_id"]):
+        sentences = context.get(title)
+        if sentences is None or not 0 <= index < len(sentences):
+            return None
+        facts.append({"title": title, "sent_id": index, "text": sentences[index]})
+    return facts
+
+
 def prepare(config):
     run_dir = Path(config["run_dir"])
     queries_path = download(
         config, "BeIR/hotpotqa", "queries/queries-00000-of-00001.parquet", "beir_revision",
     )
     queries = {row["_id"]: row["text"] for row in parquet_rows(queries_path)}
-    counts = {}
+    counts, skipped = {}, {}
     for split, source in [("validation", "train"), ("test", "validation")]:
         path = run_dir / f"{split}.jsonl"
         if path.exists():
@@ -71,12 +87,10 @@ def prepare(config):
                     if row["id"] not in qrels:
                         continue
                     context = dict(zip(row["context"]["title"], row["context"]["sentences"]))
-                    facts = [
-                        {"title": title, "sent_id": index, "text": context[title][index]}
-                        for title, index in zip(
-                            row["supporting_facts"]["title"], row["supporting_facts"]["sent_id"],
-                        )
-                    ]
+                    facts = usable_facts(row, context)
+                    if facts is None:
+                        skipped.setdefault(split, []).append(row["id"])
+                        continue
                     rows.append({
                         "id": row["id"], "question": queries[row["id"]],
                         "answer": row["answer"], "level": row["level"], "type": row["type"],
@@ -87,3 +101,9 @@ def prepare(config):
         counts[split] = dict(Counter(f"{row['level']}/{row['type']}" for row in selected))
         print(f"{split}: {len(selected)} queries, {counts[split]}")
     write_json(run_dir / "sample_counts.json", counts)
+    if skipped:
+        path = run_dir / "skipped_queries.json"
+        previous = json.loads(path.read_text()) if path.exists() else {}
+        write_json(path, {**previous, **skipped})
+        for split, ids in skipped.items():
+            print(f"{split}: skipped {len(ids)} queries with broken supporting facts: {', '.join(ids)}")
