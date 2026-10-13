@@ -1,0 +1,35 @@
+data_dir = "data"
+run_dir = "runs/main"
+seed = 42
+validation_size = 100
+test_size = 300
+
+beir_revision = "a7e8bab212f5a89f9be1bc9b654aa6dfa317f32b"
+qrels_revision = "b15429e9244c8ec966985d7778427c3b1543b314"
+hotpot_revision = "1908d6afbbead072334abe2965f91bd2709910ab"
+
+retriever = "BAAI/bge-base-en-v1.5"
+reranker = "BAAI/bge-reranker-base"
+device = "cpu"
+batch_size = 32
+corpus_chunk_size = 8192
+encoder_max_length = 512
+query_instruction = "Represent this sentence for searching relevant passages: "
+candidate_count = 20
+context_count = 5
+
+llm_reranker = "openai/gpt-oss-120b"
+generator = "openai/gpt-oss-20b"
+rerank_doc_tokens = 192
+context_doc_tokens = 512
+rerank_output_tokens = 1024
+answer_output_tokens = 512
+reasoning_effort = "low"
+
+requests_per_minute = 30
+tokens_per_minute = 8000
+requests_per_day = 1000
+tokens_per_day = 200000
+
+ndcg_tolerance = 0.02
+bootstrap_samples = 2000
