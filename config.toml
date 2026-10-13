@@ -10,6 +10,8 @@ hotpot_revision = "1908d6afbbead072334abe2965f91bd2709910ab"
 
 retriever = "BAAI/bge-base-en-v1.5"
 reranker = "BAAI/bge-reranker-base"
+retriever_revision = "a5beb1e3e68b9ab74eb54cfd186867f64f240e1a"
+reranker_revision = "2cfc18c9415c912f9d8155881c133215df768a70"
 device = "cpu"
 batch_size = 32
 corpus_chunk_size = 8192

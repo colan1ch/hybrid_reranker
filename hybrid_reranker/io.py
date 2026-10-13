@@ -8,6 +8,10 @@ def read_jsonl(path):
     return []
 
 
+def load_results(path):
+    return {row["id"]: row for row in read_jsonl(path)}
+
+
 def append_jsonl(path, row):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as file:
