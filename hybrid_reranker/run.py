@@ -9,9 +9,6 @@ from .io import append_jsonl, load_results, read_jsonl
 from .llm import LLM, context
 
 
-METHODS = ["dense", "bert", "llm", "cascade_gap", "cascade_cosine"]
-
-
 def run(config, split, method, answers=False):
     run_dir = Path(config["run_dir"])
     queries = read_jsonl(run_dir / f"{split}.jsonl")
