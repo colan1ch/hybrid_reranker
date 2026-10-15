@@ -57,7 +57,7 @@ def config(tmp_path):
     """The project settings with all output folders moved to a temporary directory and no API pauses."""
     base = tomllib.loads((ROOT / "config.toml").read_text())
     return {
-        **base, "data_dir": str(tmp_path / "data"), "run_dir": str(tmp_path / "run"),
+        **base, "data_dir": str(tmp_path / "data"), "run_dir": str(tmp_path / "run"), "mock_data": True,
         "requests_per_minute": 600000, "tokens_per_minute": 10**12,
     }
 

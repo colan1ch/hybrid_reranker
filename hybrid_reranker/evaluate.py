@@ -74,6 +74,7 @@ def evaluate(config, split, methods, answers=False):
     if not queries:
         print(f"No {split} queries in {run_dir}. Run `rerank prepare` first.")
         return
+    kind = "MOCK" if config.get("mock_data", False) or any(row.get("mock", False) for row in queries) else "RESULTS"
     results = {method: complete_results(run_dir / f"{split}.{method}.jsonl", queries, answers) for method in methods}
     if any(rows is None for rows in results.values()):
         return
@@ -88,7 +89,7 @@ def evaluate(config, split, methods, answers=False):
     means, differences = [], []
     references = [name for name in ("llm", "bert") if name in arrays]
     for method, values in arrays.items():
-        means.append({"method": method, "queries": len(queries), **dict(zip(keys, values.mean(axis=0).tolist()))})
+        means.append({"data_kind": kind, "method": method, "queries": len(queries), **dict(zip(keys, values.mean(axis=0).tolist()))})
         for reference in references:
             if method == reference:
                 continue
@@ -96,18 +97,18 @@ def evaluate(config, split, methods, answers=False):
             interval = np.quantile(delta[indices].mean(axis=1), [0.025, 0.975], axis=0)
             for index, key in enumerate(keys):
                 differences.append({
-                    "method": method, "reference": reference, "metric": key,
+                    "data_kind": kind, "method": method, "reference": reference, "metric": key,
                     "difference": float(delta[:, index].mean()),
                     "ci95_low": float(interval[0, index]), "ci95_high": float(interval[1, index]),
                 })
     write_jsonl(run_dir / f"{split}.metrics.jsonl", [
-        {"id": query["id"], "method": method, **metrics}
+        {"data_kind": kind, "id": query["id"], "method": method, **metrics}
         for method, rows in measurements.items() for query, metrics in zip(queries, rows)
     ])
     write_csv(run_dir / f"{split}.summary.csv", means)
     if differences:
         write_csv(run_dir / f"{split}.bootstrap.csv", differences)
-    write_json(run_dir / f"{split}.summary.json", {"means": means, "paired_bootstrap": differences})
+    write_json(run_dir / f"{split}.summary.json", {"data_kind": kind, "means": means, "paired_bootstrap": differences})
     for row in means:
         print(f"{row['method']:16} nDCG={row['ndcg@10']:.4f} Recall={row['recall@20']:.4f} "
               f"LLM={row['llm_fraction']:.1%} failed={row['llm_failed']:.1%} tokens/query={row['rerank_total_tokens']:.1f}")

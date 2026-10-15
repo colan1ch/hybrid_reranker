@@ -62,3 +62,12 @@ def test_tune_freezes_thresholds(config, run_dir):
     tune(config)
     saved = json.loads((run_dir / "thresholds.json").read_text())
     assert {"gap", "cosine", "validation_queries"} <= saved.keys() and saved["validation_queries"] == 8
+
+
+def test_synthetic_evaluations_are_marked(config, run_dir):
+    make_run(run_dir)
+    config["bootstrap_samples"] = 50
+    evaluate(config, "test", ["bert", "llm"])
+    result = json.loads((run_dir / "test.summary.json").read_text())
+    assert result["data_kind"] == "MOCK"
+    assert all(row["data_kind"] == "MOCK" for row in result["means"] + result["paired_bootstrap"])

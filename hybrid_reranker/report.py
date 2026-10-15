@@ -12,7 +12,7 @@ from .metrics import answer_metrics, ranking_metrics
 
 LABELS = {"dense": "Dense", "bert": "BERT", "llm": "Always LLM", "gap": "Gap rule",
           "gate": "Logistic gate", "random": "Random", "oracle": "Oracle"}
-FIELDS = ("ndcg@10", "both_in_top5", "em", "f1", "llm_fraction", "rerank_tokens", "answer_tokens", "llm_failed")
+FIELDS = ("ndcg@10", "both_in_top5", "em", "f1", "llm_fraction", "rerank_tokens", "answer_tokens", "llm_failed", "answer_failed")
 
 
 def measurements(query, result):
@@ -21,7 +21,8 @@ def measurements(query, result):
     return [ranking_metrics(result["ranking"], query["qrels"])["ndcg@10"],
             float(bool(relevant) and relevant <= set(result["ranking"][:5])), answer["em"], answer["f1"],
             float(result["llm_called"]), result["rerank_usage"].get("total_tokens", 0),
-            result.get("answer_usage", {}).get("total_tokens", np.nan), float(result.get("llm_failed", False))]
+            result.get("answer_usage", {}).get("total_tokens", np.nan), float(result.get("llm_failed", False)),
+            float(result.get("answer_failed", False)) if "answer" in result else np.nan]
 
 
 def format_number(value):
@@ -30,9 +31,10 @@ def format_number(value):
 
 def latex_table(path, caption, headers, rows):
     def escape(value):
-        return str(value).replace("\\", r"\textbackslash{}").replace("_", r"\_").replace("%", r"\%").replace("&", r"\&")
+        return str(value).replace("\\", r"\textbackslash{}").replace("_", r"\_").replace("%", r"\%").replace("&", r"\&").replace(
+            ">", r"\textgreater{}").replace("<", r"\textless{}")
 
-    lines = [r"\begin{table*}[t]", r"\centering\scriptsize", r"\caption{" + escape(caption) + "}",
+    lines = [r"\begin{table*}[t]", r"\centering\scriptsize", r"\setlength{\tabcolsep}{3pt}", r"\caption{" + escape(caption) + "}",
              r"\begin{tabular}{" + "l" * len(headers) + "}", r"\hline",
              " & ".join(map(escape, headers)) + r" \\", r"\hline"]
     lines.extend(" & ".join(escape(value) for value in row) + r" \\" for row in rows)
@@ -148,7 +150,10 @@ def report(config, split="test", repeats=1000, mock=False):
         diagnostics.append({"data_kind": kind, "block": "stability", "item": "Not computed; run rerank resplit",
                             "gap": None, "gate": None})
     diagnostics.extend([
-        {"data_kind": kind, "block": "signal", "item": "AUC on evaluation split", "gap": summary["auc_gap"], "gate": summary["auc_gate"]},
+        {"data_kind": kind, "block": "signal", "item": f"AUC: gap gain>0, gate gain>{gate_model['min_gain']:g}",
+         "gap": summary["auc_gap"], "gate": summary["auc_gate"]},
+        {"data_kind": kind, "block": "signal", "item": "Positive label fraction",
+         "gap": float((gains > 0).mean()), "gate": float((gains > gate_model["min_gain"]).mean())},
         {"data_kind": kind, "block": "signal", "item": "OOF AUC on validation", "gap": None, "gate": gate_model["oof_auc"]},
     ])
     output = run_dir / "report" / split
@@ -159,7 +164,7 @@ def report(config, split="test", repeats=1000, mock=False):
         row["data_kind"] = kind
     marker = "MOCK. " if kind == "MOCK" else ""
     latex_table(output / "table_1.tex", marker + "Saved ranking results; intervals: paired query bootstrap, 95%.",
-                ["Method", "nDCG@10 [95%]", "Delta vs LLM [95%]", "Both@5", "EM", "F1", "Calls", "120B tok/q", "20B tok/q", "Failures"], [
+                ["Method", "nDCG@10 [95%]", "Delta vs LLM [95%]", "Both@5", "EM", "F1", "Call frac.", "120B tok/q", "20B tok/q", "120B fail", "20B fail"], [
                     [LABELS[row["method"]], f"{row['ndcg@10']:.3f} [{row['ndcg_ci95_low']:.3f}, {row['ndcg_ci95_high']:.3f}]",
                      f"{row['difference_vs_llm']:.3f} [{row['difference_ci95_low']:.3f}, {row['difference_ci95_high']:.3f}]",
                      *[format_number(row[key]) for key in FIELDS[1:]]] for row in table])
@@ -167,7 +172,7 @@ def report(config, split="test", repeats=1000, mock=False):
                 ["Block", "Item", "Gap rule", "Logistic gate"], [
                     [row["block"], row["item"], format_number(row["gap"]), format_number(row["gate"])] for row in diagnostics])
     write_json(output / "report.json", {
-        "data_kind": kind, "split": split, "table_1": table, "table_2": diagnostics,
+        "data_kind": kind, "split": split, "gate_min_gain": gate_model["min_gain"], "table_1": table, "table_2": diagnostics,
         "notes": ["Missing saved answers are left blank, never generated or estimated.",
                   "Random uses the empirical inclusion weights of the fixed-seed draws at the frozen gap budget.",
                   "Oracle uses exactly the same number of calls as the frozen gap rule.",

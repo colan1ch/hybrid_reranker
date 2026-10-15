@@ -92,6 +92,7 @@ def run_gate(config, split, answers=False):
     if scores is None:
         return False
     model = json.loads((run_dir / "gate.json").read_text())
+    kind = data_kind(config, rows, model["data_kind"] == "MOCK")
     output = run_dir / f"{split}.cascade_gate.jsonl"
     saved = load_results(output)
     for row, score in zip(rows, scores):
@@ -101,7 +102,7 @@ def run_gate(config, split, answers=False):
         source = row["llm"] if called else row["bert"]
         result = {key: value for key, value in source.items() if answers or not key.startswith("answer")}
         result.update(llm_called=called, llm_failed=source.get("llm_failed", False) if called else False,
-                      rerank_usage=source["rerank_usage"] if called else {}, gate_signal=float(score))
+                      rerank_usage=source["rerank_usage"] if called else {}, gate_signal=float(score), data_kind=kind)
         append_jsonl(output, result)
     print(f"Saved offline {split}/cascade_gate: {output}")
     return True

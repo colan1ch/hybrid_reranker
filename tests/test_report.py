@@ -66,3 +66,16 @@ def test_report_requires_fitted_gate_and_dense_results(config, run_dir, offline_
     report(config)
     assert "test.dense.jsonl" in capsys.readouterr().out
     assert not (run_dir / "report").exists()
+
+
+def test_report_retains_generator_failure_counts(config, run_dir, offline_run):
+    prepare_report(config, run_dir, offline_run)
+    path = run_dir / "test.llm.jsonl"
+    rows = load_results(path)
+    next(iter(rows.values()))["answer_failed"] = True
+    write_jsonl(path, rows.values())
+    report(config, repeats=10)
+    saved = json.loads((run_dir / "report/test/report.json").read_text())
+    llm = next(row for row in saved["table_1"] if row["method"] == "llm")
+    assert llm["answer_failed"] == .02 and llm["llm_failed"] == 0
+    assert saved["gate_min_gain"] == 0
