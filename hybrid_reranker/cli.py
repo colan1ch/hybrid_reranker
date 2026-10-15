@@ -22,6 +22,11 @@ def main():
     command.add_argument("--split", choices=["validation", "test"], default="test")
     command.add_argument("--repeats", type=int, default=1000)
     command.add_argument("--mock", action="store_true")
+    command = commands.add_parser("resplit")
+    command.add_argument("--repeats", type=int, default=100)
+    command.add_argument("--calibration-size", type=int)
+    command.add_argument("--source", choices=["both", "validation", "test"], default="both")
+    command.add_argument("--mock", action="store_true")
     methods = ["dense", "bert", "llm", "cascade_gap", "cascade_cosine"]
     for name in ["run", "evaluate"]:
         command = commands.add_parser(name)
@@ -87,6 +92,9 @@ def main():
     elif args.command == "controls":
         from .controls import controls
         controls(config, args.split, args.repeats, args.mock)
+    elif args.command == "resplit":
+        from .splits import resplit
+        resplit(config, args.repeats, args.calibration_size, args.source, args.mock)
     else:
         from .evaluate import evaluate
         evaluate(config, args.split, selected, args.answers)
