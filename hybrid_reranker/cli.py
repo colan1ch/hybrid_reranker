@@ -18,6 +18,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ["prepare", "retrieve", "tune"]:
         commands.add_parser(name)
+    command = commands.add_parser("controls")
+    command.add_argument("--split", choices=["validation", "test"], default="test")
+    command.add_argument("--repeats", type=int, default=1000)
+    command.add_argument("--mock", action="store_true")
     methods = ["dense", "bert", "llm", "cascade_gap", "cascade_cosine"]
     for name in ["run", "evaluate"]:
         command = commands.add_parser(name)
@@ -80,6 +84,9 @@ def main():
     elif args.command == "tune":
         from .evaluate import tune
         tune(config)
+    elif args.command == "controls":
+        from .controls import controls
+        controls(config, args.split, args.repeats, args.mock)
     else:
         from .evaluate import evaluate
         evaluate(config, args.split, selected, args.answers)

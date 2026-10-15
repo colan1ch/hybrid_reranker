@@ -1,6 +1,11 @@
 import math
 
-from hybrid_reranker.metrics import answer_metrics, query_metrics, ranking_metrics, support_recall
+from hybrid_reranker.metrics import (
+    answer_metrics,
+    query_metrics,
+    ranking_metrics,
+    support_recall,
+)
 
 
 def ranking_with(first, second, size=20):

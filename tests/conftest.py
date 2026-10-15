@@ -1,4 +1,5 @@
 import json
+import socket
 import tomllib
 import types
 from pathlib import Path
@@ -6,6 +7,49 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(autouse=True)
+def offline(monkeypatch):
+    """All tests use local fixtures; accidental network access fails the test."""
+    def deny(*args, **kwargs):
+        pytest.fail("Network access is disabled in tests")
+    monkeypatch.setattr(socket.socket, "connect", deny)
+    monkeypatch.setattr(socket, "create_connection", deny)
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+
+
+@pytest.fixture
+def offline_run(run_dir, config):
+    """MOCK rankings: the LLM helps 10/50 queries, hurts 10/50, and ties on the rest."""
+    from hybrid_reranker.controls import load_pairs
+    from hybrid_reranker.io import write_json, write_jsonl
+
+    def make(split="test", prefix=None, count=50):
+        queries, bert, llm = [], [], []
+        prefix = prefix or split
+        for index in range(count):
+            query_id = f"{prefix}-{index:03d}"
+            ranking = ["gold1", "gold2"] + [f"x{i}" for i in range(18)]
+            bad = ranking[2:12] + ranking[:2] + ranking[12:]
+            first, second = (bad, ranking) if index < 10 else (ranking, bad) if index >= count - 10 else (ranking, ranking)
+            queries.append({"id": query_id, "question": f"MOCK {index}", "answer": "yes", "mock": True,
+                            "qrels": {"gold1": 1, "gold2": 1}, "supporting_facts": []})
+            gap = (index + 1) / 10
+            row = {"id": query_id, "ranking": first, "scores": [20 - gap * i for i in range(20)], "gap": gap,
+                   "llm_called": False, "rerank_usage": {}, "context": [], "answer": "yes",
+                   "answer_usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11}}
+            bert.append(row)
+            llm.append({**row, "ranking": second, "llm_called": True,
+                        "rerank_usage": {"prompt_tokens": 2300, "completion_tokens": 100, "total_tokens": 2400}})
+        write_jsonl(run_dir / f"{split}.jsonl", queries)
+        write_jsonl(run_dir / f"{split}.bert.jsonl", bert)
+        write_jsonl(run_dir / f"{split}.llm.jsonl", llm)
+        if not (run_dir / "thresholds.json").exists():
+            write_json(run_dir / "thresholds.json", {"gap": {"threshold": 1.0}, "cosine": {"threshold": 0.5}})
+        return load_pairs(config, split)
+    return make
 
 
 @pytest.fixture

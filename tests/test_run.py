@@ -6,8 +6,8 @@ from conftest import documents, permutation
 pytest.importorskip("torch")
 pytest.importorskip("sentence_transformers")
 
-from hybrid_reranker.io import load_results, write_jsonl  # noqa: E402
-from hybrid_reranker.run import run  # noqa: E402
+from hybrid_reranker.io import load_results, write_jsonl
+from hybrid_reranker.run import run
 
 
 def prepare_run_dir(run_dir):
