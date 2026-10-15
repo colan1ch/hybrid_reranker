@@ -19,6 +19,13 @@ def run(config, split, method, answers=False):
     threshold = None
     if method.startswith("cascade"):
         rule = method.removeprefix("cascade_")
+        if not (run_dir / "thresholds.json").exists():
+            print("Missing thresholds.json. Run `rerank tune` first.")
+            return False
+        absent = [query["id"] for query in queries if query["id"] not in bert]
+        if absent:
+            print(f"{len(absent)} {split} queries have no BERT result. Run `rerank run --split {split} --method bert` first.")
+            return False
         threshold = json.loads((run_dir / "thresholds.json").read_text())[rule]["threshold"]
     llm = LLM(config)
     model = None
@@ -30,7 +37,7 @@ def run(config, split, method, answers=False):
         if query_id in saved:
             row = saved[query_id]
         else:
-            row = {"id": query_id, "llm_called": False, "rerank_usage": {}}
+            row = {"id": query_id, "llm_called": False, "llm_failed": False, "rerank_usage": {}}
             if method == "dense":
                 row["ranking"] = [doc["id"] for doc in documents]
             elif method == "bert":
@@ -57,8 +64,13 @@ def run(config, split, method, answers=False):
                     result = llm.rerank(query["question"], documents)
                     if result is None:
                         return False
-                    row["ranking"], row["rerank_usage"] = result
+                    ranking, row["rerank_usage"], error = result
                     row["llm_called"] = True
+                    if ranking is None:
+                        # The LLM gave no usable ranking even after one retry: keep the cheaper order and record it.
+                        row["llm_failed"], row["llm_error"] = True, error
+                        ranking = bert.get(query_id, {}).get("ranking") or [doc["id"] for doc in documents]
+                    row["ranking"] = ranking
                 else:
                     row["ranking"] = bert[query_id]["ranking"]
             row["context"] = context(config, documents, row["ranking"])
@@ -67,11 +79,10 @@ def run(config, split, method, answers=False):
             result = llm.answer(query["question"], row["context"])
             if result is None:
                 return False
-            if result["finish_reason"] != "stop":
-                print("Incomplete answer; inspect data/api.jsonl and increase the output limit.")
-                return False
-            row["answer"] = result["content"].strip()
-            row["answer_usage"] = result["usage"]
+            row["answer"], row["answer_usage"], error = result
+            row["answer_failed"] = error is not None
+            if error:
+                row["answer_error"] = error
             append_jsonl(output, row)
     print(f"Saved {split}/{method}: {output}")
     return True
