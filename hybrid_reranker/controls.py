@@ -108,7 +108,10 @@ def controls(config, split="test", repeats=1000, mock=False):
     gate_path = run_dir / "gate.json"
     if gate_path.exists():
         from .gate import gate_scores
-        scores["gate"] = -gate_scores(config, split, rows)
+        signal = gate_scores(config, split, rows, oof=split == "validation")
+        if signal is None:
+            return
+        scores["gate"] = -signal
     kind = data_kind(config, rows, mock)
     curves = []
     for budget in BUDGETS:

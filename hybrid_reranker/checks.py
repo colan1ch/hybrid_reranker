@@ -10,7 +10,8 @@ def comparable(config):
 
 def needs_api(command, method, answers):
     """True when the command may send requests to the Groq API."""
-    return command == "run" and (answers or method in ("llm", "all") or method.startswith("cascade"))
+    return command == "run" and method != "cascade_gate" and (
+        answers or method in ("llm", "all") or method.startswith("cascade"))
 
 
 def require(run_dir, names, step):
@@ -32,6 +33,9 @@ def prerequisites(command, run_dir, split=None, method=None, methods=()):
             or require(run_dir, ["validation.llm.jsonl"], "run --split validation --method llm --allow-api")
         )
     if command == "run":
+        if method == "cascade_gate":
+            return require(run_dir, ["gate.json"], "gate") or require(
+                run_dir, [f"{split}.jsonl", f"{split}.bert.jsonl", f"{split}.llm.jsonl"], f"run --split {split}")
         message = require(run_dir, [f"{split}.jsonl"], "prepare") or require(run_dir, ["candidates.jsonl"], "retrieve")
         if message is None and (method == "all" or method.startswith("cascade")):
             message = require(run_dir, ["thresholds.json"], "tune")

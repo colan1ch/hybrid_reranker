@@ -10,6 +10,9 @@ from .llm import LLM, context
 
 
 def run(config, split, method, answers=False):
+    if method == "cascade_gate":
+        from .gate import run_gate
+        return run_gate(config, split, answers)
     run_dir = Path(config["run_dir"])
     queries = read_jsonl(run_dir / f"{split}.jsonl")
     candidates = load_results(run_dir / "candidates.jsonl")

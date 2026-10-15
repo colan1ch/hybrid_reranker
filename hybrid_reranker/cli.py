@@ -27,7 +27,10 @@ def main():
     command.add_argument("--calibration-size", type=int)
     command.add_argument("--source", choices=["both", "validation", "test"], default="both")
     command.add_argument("--mock", action="store_true")
-    methods = ["dense", "bert", "llm", "cascade_gap", "cascade_cosine"]
+    command = commands.add_parser("gate")
+    command.add_argument("--min-gain", type=float, default=0.0)
+    command.add_argument("--mock", action="store_true")
+    methods = ["dense", "bert", "llm", "cascade_gap", "cascade_cosine", "cascade_gate"]
     for name in ["run", "evaluate"]:
         command = commands.add_parser(name)
         command.add_argument("--split", choices=["validation", "test"], default="test")
@@ -63,6 +66,8 @@ def main():
             ]},
         })
     selected = methods if getattr(args, "method", None) == "all" else [getattr(args, "method", None)]
+    if getattr(args, "method", None) == "all" and not (run_dir / "gate.json").exists():
+        selected = [method for method in selected if method != "cascade_gate"]
     message = prerequisites(args.command, run_dir, getattr(args, "split", None), getattr(args, "method", None), selected)
     if message:
         print(message)
@@ -95,6 +100,9 @@ def main():
     elif args.command == "resplit":
         from .splits import resplit
         resplit(config, args.repeats, args.calibration_size, args.source, args.mock)
+    elif args.command == "gate":
+        from .gate import train_gate
+        train_gate(config, args.min_gain, args.mock)
     else:
         from .evaluate import evaluate
         evaluate(config, args.split, selected, args.answers)
