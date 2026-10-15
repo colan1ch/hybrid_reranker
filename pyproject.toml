@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.9"]
+plots = ["matplotlib>=3.8,<4"]
 
 [project.scripts]
 rerank = "hybrid_reranker.cli:main"

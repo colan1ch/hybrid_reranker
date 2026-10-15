@@ -85,3 +85,13 @@ def test_the_local_models_do_not_need_the_flag(invoke, config, capsys):
         write_jsonl(run_dir / name, [])
     output = invoke("run", "--split", "test", "--method", "dense", capsys=capsys)
     assert "--allow-api" not in output and "Saved test/dense" in output
+
+
+def test_offline_analysis_commands_and_gate_do_not_need_api_confirmation(invoke, config, offline_run, capsys):
+    offline_run("validation")
+    offline_run("test")
+    assert "validation-only gate" in invoke("gate", "--mock", capsys=capsys)
+    assert "MOCK" in invoke("controls", "--repeats", "10", capsys=capsys)
+    assert "repeated splits" in invoke("resplit", "--repeats", "5", "--calibration-size", "25", capsys=capsys)
+    assert "offline test/cascade_gate" in invoke("run", "--method", "cascade_gate", "--answers", capsys=capsys)
+    assert not (Path(config["data_dir"]) / "api.jsonl").exists()

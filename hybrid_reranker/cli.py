@@ -30,6 +30,10 @@ def main():
     command = commands.add_parser("gate")
     command.add_argument("--min-gain", type=float, default=0.0)
     command.add_argument("--mock", action="store_true")
+    command = commands.add_parser("report")
+    command.add_argument("--split", choices=["validation", "test"], default="test")
+    command.add_argument("--repeats", type=int, default=1000)
+    command.add_argument("--mock", action="store_true")
     methods = ["dense", "bert", "llm", "cascade_gap", "cascade_cosine", "cascade_gate"]
     for name in ["run", "evaluate"]:
         command = commands.add_parser(name)
@@ -103,6 +107,9 @@ def main():
     elif args.command == "gate":
         from .gate import train_gate
         train_gate(config, args.min_gain, args.mock)
+    elif args.command == "report":
+        from .report import report
+        report(config, args.split, args.repeats, args.mock)
     else:
         from .evaluate import evaluate
         evaluate(config, args.split, selected, args.answers)

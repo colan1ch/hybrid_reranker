@@ -72,14 +72,17 @@ def budget_masks(scores, count):
 def random_control(bert, llm, tokens, count, repeats, seed):
     rng = np.random.default_rng(seed)
     quality, costs = [], []
+    inclusion = np.zeros(len(bert))
     for _ in range(repeats):
         selected = np.zeros(len(bert), dtype=bool)
         selected[rng.choice(len(bert), count, replace=False)] = True
+        inclusion += selected
         quality.append(float(np.where(selected, llm, bert).mean()))
         costs.append(float((tokens * selected).mean()))
     return {
         "ndcg@10": float(np.mean(quality)), "tokens_per_query": float(np.mean(costs)),
         "selection_p05": float(np.quantile(quality, 0.05)), "selection_p95": float(np.quantile(quality, 0.95)),
+        "inclusion": (inclusion / repeats).tolist(),
     }
 
 
@@ -112,7 +115,7 @@ def controls(config, split="test", repeats=1000, mock=False):
         if signal is None:
             return
         scores["gate"] = -signal
-    kind = data_kind(config, rows, mock)
+    kind = data_kind(config, rows, mock or (gate_path.exists() and json.loads(gate_path.read_text())["data_kind"] == "MOCK"))
     curves = []
     for budget in BUDGETS:
         count = int(len(rows) * budget)
@@ -128,7 +131,8 @@ def controls(config, split="test", repeats=1000, mock=False):
         random = random_control(bert, llm, tokens, count, repeats, config["seed"])
         curves.append({
             "data_kind": kind, "method": "random", "budget": budget, "calls": count,
-            "llm_fraction": count / len(rows), **random, "gain_over_bert": random["ndcg@10"] - float(bert.mean()),
+            "llm_fraction": count / len(rows), **{key: value for key, value in random.items() if key != "inclusion"},
+            "gain_over_bert": random["ndcg@10"] - float(bert.mean()),
         })
     threshold = json.loads(threshold_path.read_text())["gap"]["threshold"]
     selected = gaps <= threshold
@@ -144,12 +148,20 @@ def controls(config, split="test", repeats=1000, mock=False):
         "bert_ndcg": float(bert.mean()), "llm_ndcg": float(llm.mean()), "auc_gap": auc(gains > 0, -gaps),
         "gate_available": "gate" in scores, "threshold": threshold, "llm_fraction": count / len(rows),
         "rule_ndcg": quality, "random_ndcg": random["ndcg@10"], "oracle_ndcg": oracle_quality,
+        "random_inclusion": random["inclusion"],
         "retained_gain": (quality - bert.mean()) / improvement if improvement else None,
         "gain_over_random": quality - random["ndcg@10"],
         "oracle_fraction": (quality - random["ndcg@10"]) / oracle_gain if oracle_gain else None,
         "budget_policy": "exact floor(n * budget) calls; stable input order breaks score ties",
     }
-    matrix = [{"data_kind": kind, **row} for row in decision_table(selected, gains)]
+    matrix = [{"data_kind": kind, "method": "gap", **row} for row in decision_table(selected, gains)]
+    if "gate" in scores:
+        gate = json.loads(gate_path.read_text())
+        gate_selected = -scores["gate"] <= gate["threshold"]
+        summary["auc_gate"] = auc(gains > gate["min_gain"], scores["gate"])
+        summary["gate_min_gain"] = gate["min_gain"]
+        summary["gate_fraction"] = float(gate_selected.mean())
+        matrix.extend({"data_kind": kind, "method": "gate", **row} for row in decision_table(gate_selected, gains))
     output = run_dir / "controls"
     output.mkdir(exist_ok=True)
     write_csv(output / f"{split}.curves.csv", curves)
