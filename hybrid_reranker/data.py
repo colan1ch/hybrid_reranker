@@ -63,7 +63,60 @@ def usable_facts(row, context):
     return facts
 
 
+def question_rows(config, source, qrels, queries):
+    filenames = (
+        [f"distractor/train-{i:05d}-of-00002.parquet" for i in range(2)]
+        if source == "train" else ["distractor/validation-00000-of-00001.parquet"]
+    )
+    rows, skipped = [], []
+    for filename in filenames:
+        source_path = download(config, "hotpotqa/hotpot_qa", filename, "hotpot_revision")
+        for row in parquet_rows(source_path):
+            if row["id"] not in qrels:
+                continue
+            context = dict(zip(row["context"]["title"], row["context"]["sentences"]))
+            facts = usable_facts(row, context)
+            if facts is None:
+                skipped.append(row["id"])
+                continue
+            rows.append({
+                "id": row["id"], "question": queries[row["id"]],
+                "answer": row["answer"], "level": row["level"], "type": row["type"],
+                "qrels": qrels[row["id"]], "supporting_facts": facts,
+            })
+    return rows, skipped
+
+
+def prepare_shared(config):
+    run_dir = Path(config["run_dir"])
+    if any((run_dir / f"{split}.jsonl").exists() for split in ("validation", "test")):
+        print("Shared BEIR test sampling needs an empty run_dir; existing question files were kept.")
+        return
+    path = download(config, "BeIR/hotpotqa", "queries/queries-00000-of-00001.parquet", "beir_revision")
+    queries = {row["_id"]: row["text"] for row in parquet_rows(path)}
+    rows, skipped = question_rows(config, "validation", load_qrels(config, "test"), queries)
+    if len(rows) < config["validation_size"] + config["test_size"]:
+        print(f"Only {len(rows)} eligible BEIR test queries; reduce sample sizes or use the full source.")
+        return
+    validation = sample_queries(rows, config["validation_size"], config["seed"])
+    used = {row["id"] for row in validation}
+    test = sample_queries([row for row in rows if row["id"] not in used], config["test_size"], config["seed"] + 1)
+    counts = {}
+    for split, selected in (("validation", validation), ("test", test)):
+        write_jsonl(run_dir / f"{split}.jsonl", [{**row, "beir_split": "test"} for row in selected])
+        counts[split] = dict(Counter(f"{row['level']}/{row['type']}" for row in selected))
+        print(f"{split}: {len(selected)} disjoint queries from BEIR test, {counts[split]}")
+    write_json(run_dir / "sample_counts.json", counts)
+    write_json(run_dir / "sampling.json", {"sample_source": "beir_test", "seed": config["seed"],
+                                         "validation_size": len(validation), "test_size": len(test)})
+    if skipped:
+        write_json(run_dir / "skipped_queries.json", {"beir_test": skipped})
+        print(f"BEIR test: skipped {len(skipped)} queries with broken supporting facts: {', '.join(skipped)}")
+
+
 def prepare(config):
+    if config.get("sample_source", "original") == "beir_test":
+        return prepare_shared(config)
     run_dir = Path(config["run_dir"])
     queries_path = download(
         config, "BeIR/hotpotqa", "queries/queries-00000-of-00001.parquet", "beir_revision",
@@ -76,26 +129,9 @@ def prepare(config):
             selected = read_jsonl(path)
         else:
             qrels = load_qrels(config, "dev" if split == "validation" else "test")
-            filenames = (
-                [f"distractor/train-{i:05d}-of-00002.parquet" for i in range(2)]
-                if source == "train" else ["distractor/validation-00000-of-00001.parquet"]
-            )
-            rows = []
-            for filename in filenames:
-                source_path = download(config, "hotpotqa/hotpot_qa", filename, "hotpot_revision")
-                for row in parquet_rows(source_path):
-                    if row["id"] not in qrels:
-                        continue
-                    context = dict(zip(row["context"]["title"], row["context"]["sentences"]))
-                    facts = usable_facts(row, context)
-                    if facts is None:
-                        skipped.setdefault(split, []).append(row["id"])
-                        continue
-                    rows.append({
-                        "id": row["id"], "question": queries[row["id"]],
-                        "answer": row["answer"], "level": row["level"], "type": row["type"],
-                        "qrels": qrels[row["id"]], "supporting_facts": facts,
-                    })
+            rows, broken = question_rows(config, source, qrels, queries)
+            if broken:
+                skipped[split] = broken
             selected = sample_queries(rows, config[f"{split}_size"], config["seed"])
             write_jsonl(path, selected)
         counts[split] = dict(Counter(f"{row['level']}/{row['type']}" for row in selected))

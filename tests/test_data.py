@@ -4,6 +4,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from hybrid_reranker import data
+from hybrid_reranker.io import read_jsonl
 
 
 def hotpot_row(row_id, level="hard", kind="bridge", broken=False):
@@ -73,5 +74,30 @@ def test_kept_facts_carry_the_sentence_text(monkeypatch, tmp_path, config, run_d
 def test_usable_facts_rejects_negative_and_unknown_titles():
     row = {"supporting_facts": {"title": ["A"], "sent_id": [-1]}}
     assert data.usable_facts(row, {"A": ["one"]}) is None
+
+
+def test_shared_source_is_opt_in_and_keeps_both_samples_disjoint(monkeypatch, tmp_path, config, run_dir):
+    install_sources(monkeypatch, tmp_path)
+    config.update(sample_source="beir_test", validation_size=1, test_size=1)
+    data.prepare(config)
+    first = read_jsonl(run_dir / "validation.jsonl")
+    second = read_jsonl(run_dir / "test.jsonl")
+    assert len(first) == len(second) == 1
+    assert {row["id"] for row in first + second} == {"b1", "b3"}
+    assert all(row["beir_split"] == "test" for row in first + second)
+    assert json.loads((run_dir / "skipped_queries.json").read_text()) == {"beir_test": ["b2"]}
+    before = {path: path.read_bytes() for path in run_dir.glob("*.json*")}
+    data.prepare(config)
+    assert all(path.read_bytes() == content for path, content in before.items())
+
+
+def test_shared_source_never_overwrites_an_existing_split(monkeypatch, tmp_path, config, run_dir, capsys):
+    install_sources(monkeypatch, tmp_path)
+    path = run_dir / "validation.jsonl"
+    path.write_text('{"id":"keep"}\n')
+    config.update(sample_source="beir_test", validation_size=1, test_size=1)
+    data.prepare(config)
+    assert path.read_text() == '{"id":"keep"}\n' and not (run_dir / "test.jsonl").exists()
+    assert "existing question files were kept" in capsys.readouterr().out
     row = {"supporting_facts": {"title": ["Missing"], "sent_id": [0]}}
     assert data.usable_facts(row, {"A": ["one"]}) is None

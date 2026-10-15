@@ -22,6 +22,13 @@ def main():
     command.add_argument("--split", choices=["validation", "test"], default="test")
     command.add_argument("--repeats", type=int, default=1000)
     command.add_argument("--mock", action="store_true")
+    command = commands.add_parser("estimate")
+    command.add_argument("--queries", type=int)
+    command.add_argument("--answer-queries", type=int)
+    command.add_argument("--methods", type=int, default=5)
+    command.add_argument("--fraction", type=float, default=1.0)
+    command.add_argument("--rerank-tokens", type=int, default=2400)
+    command.add_argument("--answer-tokens", type=int)
     command = commands.add_parser("resplit")
     command.add_argument("--repeats", type=int, default=100)
     command.add_argument("--calibration-size", type=int)
@@ -46,9 +53,14 @@ def main():
                 help="confirm that the Groq account is on the free plan; required for anything that calls the API",
             )
     args = parser.parse_args()
-    load_dotenv()
+    if needs_api(args.command, getattr(args, "method", ""), getattr(args, "answers", False)):
+        load_dotenv()
     config_path = Path(args.config)
     config = tomllib.loads(config_path.read_text())
+    if args.command == "estimate":
+        from .estimate import estimate
+        estimate(config, args.queries, args.answer_queries, args.methods, args.fraction, args.rerank_tokens, args.answer_tokens)
+        return
     run_dir = Path(config["run_dir"])
     run_dir.mkdir(parents=True, exist_ok=True)
     snapshot = run_dir / "config.toml"

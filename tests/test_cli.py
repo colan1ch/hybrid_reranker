@@ -95,3 +95,9 @@ def test_offline_analysis_commands_and_gate_do_not_need_api_confirmation(invoke,
     assert "repeated splits" in invoke("resplit", "--repeats", "5", "--calibration-size", "25", capsys=capsys)
     assert "offline test/cascade_gate" in invoke("run", "--method", "cascade_gate", "--answers", capsys=capsys)
     assert not (Path(config["data_dir"]) / "api.jsonl").exists()
+
+
+def test_estimate_does_not_create_or_change_a_run(invoke, config, capsys):
+    output = invoke("estimate", "--answer-queries", "0", capsys=capsys)
+    assert '"estimate_only": true' in output
+    assert not Path(config["run_dir"]).exists()
