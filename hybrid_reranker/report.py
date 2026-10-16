@@ -103,9 +103,6 @@ def report(config, split="test", repeats=1000, mock=False):
     rows = load_pairs(config, split)
     if rows is None:
         return
-    if not (run_dir / "gate.json").exists():
-        print("Missing gate.json. Run `rerank gate` first; figure 2 needs the logistic gate.")
-        return
     dense = complete_results(run_dir / f"{split}.dense.jsonl", [row["query"] for row in rows])
     if dense is None:
         return
@@ -119,15 +116,21 @@ def report(config, split="test", repeats=1000, mock=False):
     gains = llm - bert
     gaps = np.array([row["bert"]["gap"] for row in rows])
     gap_selected = gaps <= summary["threshold"]
-    gate_model = json.loads((run_dir / "gate.json").read_text())
-    if "MOCK" in (gate_model["data_kind"], summary["data_kind"]):
+    gate_model, signals = None, None
+    if (run_dir / "gate.json").exists():
+        gate_model = json.loads((run_dir / "gate.json").read_text())
+        signals = gate_scores(config, split, rows, oof=split == "validation")
+        if signals is None:
+            return
+    else:
+        print("No gate.json (the gate was not trained); gate rows and the gate curve are left out.")
+    if "MOCK" in (gate_model and gate_model["data_kind"], summary["data_kind"]):
         kind = "MOCK"
     live = live_gap_mismatches(run_dir, split, rows, gap_selected)
-    signals = gate_scores(config, split, rows, oof=split == "validation")
-    if signals is None:
-        return
-    weights = {"gap": gap_selected, "gate": signals <= gate_model["threshold"],
-               "random": np.array(summary["random_inclusion"]), "oracle": budget_masks(gains, int(gap_selected.sum()))}
+    weights = {"gap": gap_selected, "random": np.array(summary["random_inclusion"]),
+               "oracle": budget_masks(gains, int(gap_selected.sum()))}
+    if gate_model:
+        weights["gate"] = signals <= gate_model["threshold"]
     values = {
         method: np.array([measurements(row["query"], row[method]) for row in rows]) for method in ("bert", "llm")
     }
@@ -138,7 +141,7 @@ def report(config, split="test", repeats=1000, mock=False):
     rng = np.random.default_rng(config["seed"])
     indices = rng.integers(len(rows), size=(config["bootstrap_samples"], len(rows)))
     table = []
-    for method in ("dense", "bert", "llm", "gap", "gate", "random", "oracle"):
+    for method in [name for name in ("dense", "bert", "llm", "gap", "gate", "random", "oracle") if name in values]:
         measured = values[method]
         means = measured.mean(axis=0)
         quality = measured[:, 0]
@@ -153,8 +156,8 @@ def report(config, split="test", repeats=1000, mock=False):
         })
     diagnostics = [
         {"data_kind": kind, "block": "decisions", "item": f"{'called' if called else 'skipped'} / {effect}", **{
-            method: next(row["queries"] for row in summary["decisions"]
-                         if row["method"] == method and row["called"] == called and row["effect"] == effect)
+            method: next((row["queries"] for row in summary["decisions"]
+                          if row["method"] == method and row["called"] == called and row["effect"] == effect), None)
             for method in ("gap", "gate")}}
         for called in (True, False) for effect in ("helped", "unchanged", "harmed")
     ]
@@ -169,19 +172,21 @@ def report(config, split="test", repeats=1000, mock=False):
     else:
         diagnostics.append({"data_kind": kind, "block": "stability", "item": "Not computed; run rerank resplit",
                             "gap": None, "gate": None})
-    gate_selected = weights["gate"]
-    for name, count in (("gap", int(gap_selected.sum())), ("gate", int(gate_selected.sum()))):
+    budgets = [("gap", int(gap_selected.sum()))] + ([("gate", int(weights["gate"].sum()))] if gate_model else [])
+    for name, count in budgets:
         diagnostics.append({
             "data_kind": kind, "block": "equal budget", "item": f"nDCG@10 with {count} calls ({name} budget)",
             "gap": float(np.where(budget_masks(-gaps, count), llm, bert).mean()),
-            "gate": float(np.where(budget_masks(-signals, count), llm, bert).mean()),
+            "gate": float(np.where(budget_masks(-signals, count), llm, bert).mean()) if gate_model else None,
         })
+    min_gain = gate_model["min_gain"] if gate_model else 0.0
     diagnostics.extend([
-        {"data_kind": kind, "block": "signal", "item": f"AUC: gap gain>0, gate gain>{gate_model['min_gain']:g}",
-         "gap": summary["auc_gap"], "gate": summary["auc_gate"]},
+        {"data_kind": kind, "block": "signal", "item": f"AUC: gap gain>0, gate gain>{min_gain:g}",
+         "gap": summary["auc_gap"], "gate": summary.get("auc_gate")},
         {"data_kind": kind, "block": "signal", "item": "Positive label fraction",
-         "gap": float((gains > 0).mean()), "gate": float((gains > gate_model["min_gain"]).mean())},
-        {"data_kind": kind, "block": "signal", "item": "OOF AUC on validation", "gap": None, "gate": gate_model["oof_auc"]},
+         "gap": float((gains > 0).mean()), "gate": float((gains > min_gain).mean()) if gate_model else None},
+        {"data_kind": kind, "block": "signal", "item": "OOF AUC on validation", "gap": None,
+         "gate": gate_model["oof_auc"] if gate_model else None},
     ])
     output = run_dir / "report" / split
     output.mkdir(parents=True, exist_ok=True)
@@ -200,7 +205,7 @@ def report(config, split="test", repeats=1000, mock=False):
                 ["Block", "Item", "Gap rule", "Logistic gate"], [
                     [row["block"], row["item"], format_number(row["gap"]), format_number(row["gate"])] for row in diagnostics])
     write_json(output / "report.json", {
-        "data_kind": kind, "split": split, "gate_min_gain": gate_model["min_gain"], "table_1": table, "table_2": diagnostics,
+        "data_kind": kind, "split": split, "gate_min_gain": gate_model["min_gain"] if gate_model else None, "table_1": table, "table_2": diagnostics,
         "live_cascade_gap_mismatches": live,
         "notes": ["Missing saved answers are left blank, never generated or estimated.",
                   ("Gap and gate rows are rebuilt from saved bert/llm results; live_cascade_gap_mismatches counts "

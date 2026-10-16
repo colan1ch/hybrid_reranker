@@ -62,15 +62,23 @@ def test_report_leaves_missing_answers_blank(config, run_dir, offline_run):
     assert all(row["em"] is None and row["f1"] is None and row["answer_tokens"] is None for row in result["table_1"])
 
 
-def test_report_requires_fitted_gate_and_dense_results(config, run_dir, offline_run, capsys):
+def test_report_requires_dense_results(config, run_dir, offline_run, capsys):
     offline_run("validation")
     offline_run("test")
     report(config)
-    assert "rerank gate" in capsys.readouterr().out
-    train_gate(config)
-    report(config)
     assert "test.dense.jsonl" in capsys.readouterr().out
     assert not (run_dir / "report").exists()
+
+
+def test_report_without_a_trained_gate_leaves_gate_rows_out(config, run_dir, offline_run, capsys):
+    rows = offline_run("test")
+    write_jsonl(run_dir / "test.dense.jsonl", [row["bert"] for row in rows])
+    report(config, repeats=10)
+    assert "No gate.json" in capsys.readouterr().out
+    saved = json.loads((run_dir / "report/test/report.json").read_text())
+    assert [row["method"] for row in saved["table_1"]] == ["dense", "bert", "llm", "gap", "random", "oracle"]
+    assert all(row["gate"] is None for row in saved["table_2"])
+    assert (run_dir / "report/test/figure_2.pdf").exists()
 
 
 def test_report_retains_generator_failure_counts(config, run_dir, offline_run):
