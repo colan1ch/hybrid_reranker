@@ -78,6 +78,8 @@ def evaluate(config, split, methods, answers=False):
     results = {method: complete_results(run_dir / f"{split}.{method}.jsonl", queries, answers) for method in methods}
     if any(rows is None for rows in results.values()):
         return
+    if any(row.get("data_kind") == "MOCK" for rows in results.values() for row in rows.values()):
+        kind = "MOCK"
     measurements = {
         method: [query_metrics(query, results[method][query["id"]], answers) for query in queries]
         for method in methods

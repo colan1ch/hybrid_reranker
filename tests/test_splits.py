@@ -19,7 +19,7 @@ def test_resplits_are_disjoint_reproducible_and_do_not_touch_thresholds(config, 
     for row in result["splits"]:
         assert len(row["calibration_ids"]) == 25 and len(row["check_ids"]) == 75
         assert not set(row["calibration_ids"]) & set(row["check_ids"])
-        assert row["llm_minus_cascade"] == -row["difference_vs_llm"]
+        assert row["tolerance_violated"] == (-row["difference_vs_llm"] > config["ndcg_tolerance"] + 1e-12)
     resplit(config, repeats=20, calibration_size=25)
     assert first == path.read_bytes() and frozen == (run_dir / "thresholds.json").read_bytes()
 
@@ -43,3 +43,10 @@ def test_invalid_calibration_size_does_not_write_results(config, run_dir, offlin
     resplit(config, calibration_size=50, source="test")
     assert "calibration_size must" in capsys.readouterr().out
     assert not (run_dir / "controls/resplits.json").exists()
+
+
+def test_single_source_resplit_defaults_to_half_of_the_split(config, run_dir, offline_run):
+    offline_run("validation")
+    resplit(config, repeats=3, source="validation")
+    result = json.loads((run_dir / "controls/resplits.json").read_text())
+    assert result["calibration_size"] == 25 and result["check_size"] == 25

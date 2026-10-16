@@ -39,7 +39,7 @@ def prerequisites(command, run_dir, split=None, method=None, methods=()):
         message = require(run_dir, [f"{split}.jsonl"], "prepare") or require(run_dir, ["candidates.jsonl"], "retrieve")
         if message is None and (method == "all" or method.startswith("cascade")):
             message = require(run_dir, ["thresholds.json"], "tune")
-        if message is None and method.startswith("cascade"):
+        if message is None and (method == "llm" or method.startswith("cascade")):
             message = require(run_dir, [f"{split}.bert.jsonl"], f"run --split {split} --method bert")
         return message
     if command == "evaluate":

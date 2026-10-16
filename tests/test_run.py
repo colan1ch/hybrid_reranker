@@ -18,6 +18,8 @@ def prepare_run_dir(run_dir):
     ]
     write_jsonl(run_dir / "validation.jsonl", queries)
     write_jsonl(run_dir / "candidates.jsonl", [{"id": q["id"], "documents": documents()} for q in queries])
+    bert = [f"d{i}" for i in (2, 1, *range(3, 21))]
+    write_jsonl(run_dir / "validation.bert.jsonl", [{"id": q["id"], "ranking": bert} for q in queries])
 
 
 def behaviour(request):
@@ -35,7 +37,7 @@ def test_one_failed_question_no_longer_stops_the_run(config, run_dir, groq):
     rows = load_results(run_dir / "validation.llm.jsonl")
     failed, fine = rows["q1"], rows["q2"]
     assert failed["llm_failed"] is True and failed["llm_error"] == "not a permutation"
-    assert failed["ranking"][:3] == ["d1", "d2", "d3"]  # no BERT result here, so the search order is kept
+    assert failed["ranking"][:3] == ["d2", "d1", "d3"]  # the BERT order, as in the cascades
     assert failed["rerank_usage"]["total_tokens"] == 2100
     assert fine["llm_failed"] is False and fine["ranking"][0] == "d20"
     assert failed["answer"] == "Paris" and failed["answer_failed"] is False
@@ -49,3 +51,23 @@ def test_cascade_without_thresholds_explains_what_to_do(config, run_dir, groq, c
     groq(behaviour)
     assert run(config, "validation", "cascade_gap") is False
     assert "rerank tune" in capsys.readouterr().out
+
+
+def test_llm_can_see_the_candidates_in_bert_order(config, run_dir, groq):
+    prepare_run_dir(run_dir)
+    order = [f"d{i}" for i in range(20, 0, -1)]
+    write_jsonl(run_dir / "validation.bert.jsonl", [{"id": f"q{i}", "ranking": order} for i in (1, 2)])
+    config["llm_input_order"] = "bert"
+    client = groq(lambda request: (permutation(), "stop"))
+    assert run(config, "validation", "llm") is True
+    passages = json.loads(client.requests[0]["messages"][1]["content"])["passages"]
+    assert passages[0]["text"].startswith("Title 20") and passages[-1]["text"].startswith("Title 1\n")
+    assert load_results(run_dir / "validation.llm.jsonl")["q1"]["ranking"][0] == "d1"
+
+
+def test_llm_run_needs_bert_results_first(config, run_dir, groq, capsys):
+    prepare_run_dir(run_dir)
+    (run_dir / "validation.bert.jsonl").unlink()
+    client = groq(lambda request: (permutation(), "stop"))
+    assert run(config, "validation", "llm") is False
+    assert "--method bert" in capsys.readouterr().out and not client.requests

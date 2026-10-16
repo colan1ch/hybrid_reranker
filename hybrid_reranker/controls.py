@@ -10,6 +10,7 @@ from .io import read_jsonl, write_json
 from .metrics import ranking_metrics
 
 BUDGETS = (0.10, 0.25, 0.50, 0.75, 1.0)
+PLOT_STEPS = 100  # figure 2 curves use every 1% of calls; the budget table keeps BUDGETS
 
 
 def load_pairs(config, split):
@@ -94,6 +95,34 @@ def decision_table(selected, gains):
     ]
 
 
+def titles(result):
+    return " | ".join(passage["title"] for passage in result.get("context", []))
+
+
+def effect(gain):
+    return "helped" if gain > 0 else "harmed" if gain < 0 else "unchanged"
+
+
+def cases(rows, gains, gap_selected, gate_selected, gate_probability, kind):
+    """One row per question, decisions that lost quality first, for reading the errors by hand."""
+    table = []
+    for index, row in enumerate(rows):
+        gold = sorted({fact["title"] for fact in row["query"].get("supporting_facts", [])})
+        called = bool(gap_selected[index])
+        table.append({
+            "data_kind": kind, "id": row["id"], "question": row["query"]["question"], "answer": row["query"].get("answer"),
+            "gold_titles": " | ".join(gold), "bert_gap": row["bert"]["gap"],
+            "gate_probability": None if gate_probability is None else float(gate_probability[index]),
+            "bert_ndcg": row["bert_ndcg"], "llm_ndcg": row["llm_ndcg"], "llm_gain": float(gains[index]),
+            "llm_effect": effect(gains[index]), "gap_called": called,
+            "gap_lost_quality": (called and gains[index] < 0) or (not called and gains[index] > 0),
+            "gate_called": None if gate_selected is None else bool(gate_selected[index]),
+            "llm_failed": row["llm"].get("llm_failed", False),
+            "bert_top5": titles(row["bert"]), "llm_top5": titles(row["llm"]),
+        })
+    return sorted(table, key=lambda row: (not row["gap_lost_quality"], -abs(row["llm_gain"])))
+
+
 def controls(config, split="test", repeats=1000, mock=False):
     rows = load_pairs(config, split)
     if rows is None:
@@ -134,6 +163,15 @@ def controls(config, split="test", repeats=1000, mock=False):
             "llm_fraction": count / len(rows), **{key: value for key, value in random.items() if key != "inclusion"},
             "gain_over_bert": random["ndcg@10"] - float(bert.mean()),
         })
+    plot_curves = []
+    for step in range(PLOT_STEPS + 1):
+        count = len(rows) * step // PLOT_STEPS
+        fraction = count / len(rows)
+        for method, signal in scores.items():
+            plot_curves.append({"method": method, "llm_fraction": fraction,
+                                "gain_over_bert": float((gains * budget_masks(signal, count)).mean())})
+        # The expected gain of k random calls is exactly k/n of the full LLM gain.
+        plot_curves.append({"method": "random", "llm_fraction": fraction, "gain_over_bert": float(gains.mean() * fraction)})
     threshold = json.loads(threshold_path.read_text())["gap"]["threshold"]
     selected = gaps <= threshold
     count = int(selected.sum())
@@ -155,16 +193,19 @@ def controls(config, split="test", repeats=1000, mock=False):
         "budget_policy": "exact floor(n * budget) calls; stable input order breaks score ties",
     }
     matrix = [{"data_kind": kind, "method": "gap", **row} for row in decision_table(selected, gains)]
+    gate_selected = None
     if "gate" in scores:
         gate = json.loads(gate_path.read_text())
         gate_selected = -scores["gate"] <= gate["threshold"]
         summary["auc_gate"] = auc(gains > gate["min_gain"], scores["gate"])
         summary["gate_min_gain"] = gate["min_gain"]
         summary["gate_fraction"] = float(gate_selected.mean())
+        summary["gate_ndcg"] = float(np.where(gate_selected, llm, bert).mean())
         matrix.extend({"data_kind": kind, "method": "gate", **row} for row in decision_table(gate_selected, gains))
     output = run_dir / "controls"
     output.mkdir(exist_ok=True)
     write_csv(output / f"{split}.curves.csv", curves)
     write_csv(output / f"{split}.decisions.csv", matrix)
-    write_json(output / f"{split}.json", {**summary, "curves": curves, "decisions": matrix})
+    write_csv(output / f"{split}.cases.csv", cases(rows, gains, selected, gate_selected, scores.get("gate"), kind))
+    write_json(output / f"{split}.json", {**summary, "curves": curves, "plot_curves": plot_curves, "decisions": matrix})
     print(f"{kind}: {len(rows)} queries, gap AUC={summary['auc_gap']}, saved {output}")

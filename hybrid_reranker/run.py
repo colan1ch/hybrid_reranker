@@ -20,6 +20,18 @@ def run(config, split, method, answers=False):
     output = run_dir / f"{split}.{method}.jsonl"
     saved = load_results(output)
     threshold = None
+    input_order = config.get("llm_input_order", "dense")
+    if input_order not in ("dense", "bert"):
+        print(f"llm_input_order must be \"dense\" or \"bert\"; got {input_order!r}.")
+        return False
+    if method == "llm":
+        # A failed LLM call falls back to the BERT order, as in the cascades, so BERT must come first.
+        absent = [query["id"] for query in queries if query["id"] not in bert]
+        if absent:
+            print(f"{len(absent)} {split} queries have no BERT result (the fallback order for failed LLM calls"
+                  f"{' and the input order' if input_order == 'bert' else ''}). "
+                  f"Run `rerank run --split {split} --method bert` first.")
+            return False
     if method.startswith("cascade"):
         rule = method.removeprefix("cascade_")
         if not (run_dir / "thresholds.json").exists():
@@ -64,7 +76,11 @@ def run(config, split, method, answers=False):
                     signal = bert[query_id]["gap"] if rule == "gap" else documents[0]["score"]
                     call_llm = signal <= threshold
                 if call_llm:
-                    result = llm.rerank(query["question"], documents)
+                    shown = documents
+                    if input_order == "bert":
+                        by_id = {doc["id"]: doc for doc in documents}
+                        shown = [by_id[doc_id] for doc_id in bert[query_id]["ranking"]]
+                    result = llm.rerank(query["question"], shown)
                     if result is None:
                         return False
                     ranking, row["rerank_usage"], error = result

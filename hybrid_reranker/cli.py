@@ -25,7 +25,7 @@ def main():
     command = commands.add_parser("estimate")
     command.add_argument("--queries", type=int)
     command.add_argument("--answer-queries", type=int)
-    command.add_argument("--methods", type=int, default=5)
+    command.add_argument("--methods", type=int, default=3, help="methods that need their own answers")
     command.add_argument("--fraction", type=float, default=1.0)
     command.add_argument("--rerank-tokens", type=int, default=2400)
     command.add_argument("--answer-tokens", type=int)

@@ -71,3 +71,14 @@ def test_synthetic_evaluations_are_marked(config, run_dir):
     result = json.loads((run_dir / "test.summary.json").read_text())
     assert result["data_kind"] == "MOCK"
     assert all(row["data_kind"] == "MOCK" for row in result["means"] + result["paired_bootstrap"])
+
+
+def test_mock_results_mark_the_evaluation(config, run_dir):
+    config["mock_data"] = False
+    queries = make_run(run_dir)
+    write_jsonl(run_dir / "test.cascade_gate.jsonl",
+                [{**result(q["id"], (1, 2)), "data_kind": "MOCK"} for q in queries])
+    evaluate(config, "test", ["bert", "llm", "cascade_gate"])
+    assert json.loads((run_dir / "test.summary.json").read_text())["data_kind"] == "MOCK"
+    evaluate(config, "test", ["bert", "llm"])
+    assert json.loads((run_dir / "test.summary.json").read_text())["data_kind"] == "RESULTS"

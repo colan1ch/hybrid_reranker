@@ -14,7 +14,10 @@ def resplit(config, repeats=100, calibration_size=None, source="both", mock=Fals
         if part is None:
             return
         rows.extend(part)
-    size = calibration_size if calibration_size is not None else config["validation_size"]
+    if calibration_size is not None:
+        size = calibration_size
+    else:  # the frozen protocol's size when pooling both splits, half of a single split otherwise
+        size = config["validation_size"] if source == "both" else len(rows) // 2
     if not 0 < size < len(rows):
         print(f"calibration_size must be between 1 and {len(rows) - 1}; got {size}.")
         return
@@ -38,12 +41,12 @@ def resplit(config, repeats=100, calibration_size=None, source="both", mock=Fals
         results.append({
             "data_kind": kind, "repeat": repeat, "threshold": best["threshold"],
             "calibration_fraction": best["llm_fraction"], "check_fraction": float(selected.mean()),
-            "ndcg@10": quality, "difference_vs_llm": -loss, "llm_minus_cascade": loss,
+            "ndcg@10": quality, "difference_vs_llm": -loss,
             "tolerance_violated": loss > config["ndcg_tolerance"] + 1e-12,
             "calibration_ids": [rows[index]["id"] for index in calibration],
             "check_ids": [rows[index]["id"] for index in check],
         })
-    fields = ("threshold", "calibration_fraction", "check_fraction", "llm_minus_cascade", "difference_vs_llm")
+    fields = ("threshold", "calibration_fraction", "check_fraction", "difference_vs_llm")
     summary = {
         key: dict(zip(("p05", "median", "p95"), np.quantile([row[key] for row in results], [.05, .5, .95]).tolist()))
         for key in fields

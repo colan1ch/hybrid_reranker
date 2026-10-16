@@ -1,3 +1,4 @@
+import csv
 import json
 
 import numpy as np
@@ -66,3 +67,15 @@ def test_threshold_chooses_tokens_then_fraction_then_quality():
     selected = choose_threshold(np.array([1, 2, 3]), np.array([0., 0., 1.]),
                                 np.array([1., 1., 0.]), np.array([100, 200, 300]), 0)
     assert selected["threshold"] == 1 and selected["tokens_per_query"] == pytest.approx(100 / 3)
+
+
+def test_case_file_puts_decisions_that_lost_quality_first(config, run_dir, offline_run):
+    offline_run()
+    (run_dir / "thresholds.json").write_text(json.dumps({"gap": {"threshold": 0.5}}))
+    controls(config, repeats=10)
+    with (run_dir / "controls/test.cases.csv").open() as file:
+        rows = list(csv.DictReader(file))
+    assert len(rows) == 50 and all(row["data_kind"] == "MOCK" for row in rows)
+    lost = [row for row in rows if row["gap_lost_quality"] == "True"]
+    assert [row["id"] for row in lost] == [f"test-{index:03d}" for index in range(5, 10)]
+    assert rows[:5] == lost and all(row["gap_called"] == "False" and row["llm_effect"] == "helped" for row in lost)

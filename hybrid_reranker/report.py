@@ -4,10 +4,10 @@ from pathlib import Path
 
 import numpy as np
 
-from .controls import arrays, budget_masks, controls, data_kind, load_pairs
+from .controls import BUDGETS, arrays, budget_masks, controls, data_kind, load_pairs
 from .evaluate import complete_results, write_csv
 from .gate import gate_scores
-from .io import write_json
+from .io import load_results, write_json
 from .metrics import answer_metrics, ranking_metrics
 
 LABELS = {"dense": "Dense", "bert": "BERT", "llm": "Always LLM", "gap": "Gap rule",
@@ -52,29 +52,47 @@ def figure_2(summary, output, kind, split):
     with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10}):
         fig, ax = plt.subplots(figsize=(7.1, 3.8), layout="constrained")
         for method, (style, marker) in styles.items():
-            rows = sorted([row for row in summary["curves"] if row["method"] == method], key=lambda row: row["llm_fraction"])
+            rows = [row for row in summary["plot_curves"] if row["method"] == method]
             if rows:
-                ax.plot([0, *[row["llm_fraction"] for row in rows]], [0, *[row["gain_over_bert"] for row in rows]],
-                        color="0.15", linestyle=style, marker=marker, markerfacecolor="white", linewidth=1.4,
-                        markersize=5, label=LABELS[method])
+                marks = [index for index, row in enumerate(rows)
+                         if any(abs(row["llm_fraction"] - budget) < 1e-9 for budget in BUDGETS)]
+                ax.plot([row["llm_fraction"] for row in rows], [row["gain_over_bert"] for row in rows],
+                        color="0.15", linestyle=style, marker=marker, markevery=marks, markerfacecolor="white",
+                        linewidth=1.4, markersize=5, label=LABELS[method] + (" (expected)" if method == "random" else ""))
         ax.axhline(0, color="0.65", linewidth=0.7)
-        ax.axvline(summary["llm_fraction"], color="0.55", linestyle="--", linewidth=0.8)
-        ax.text(summary["llm_fraction"] + .01, .02, "Fixed gap threshold", rotation=90,
-                transform=ax.get_xaxis_transform(), va="bottom", fontsize=8)
+        points = [("gap", summary["llm_fraction"], summary["rule_ndcg"], "o")]
+        if summary.get("gate_ndcg") is not None:
+            points.append(("gate", summary["gate_fraction"], summary["gate_ndcg"], "s"))
+        for method, fraction, quality, marker in points:
+            ax.scatter([fraction], [quality - summary["bert_ndcg"]], marker=marker, color="black", s=45, zorder=6,
+                       label=f"{LABELS[method]}, frozen threshold")
         full_gain = summary["llm_ndcg"] - summary["bert_ndcg"]
         ax.scatter([0, 1], [0, full_gain], marker="*", color="black", s=85, zorder=5)
-        ax.annotate("BERT", (0, 0), xytext=(7, 8), textcoords="offset points", fontsize=9)
+        ax.annotate("BERT", (0, 0), xytext=(6, -14), textcoords="offset points", fontsize=9)
         ax.annotate("Always LLM", (1, full_gain), xytext=(-8, 8), textcoords="offset points", ha="right", fontsize=9)
         ax.set(xlim=(-.03, 1.03), xlabel="Fraction of queries sent to LLM", ylabel="Change in nDCG@10 vs BERT")
         ax.xaxis.set_major_formatter(PercentFormatter(1))
         ax.grid(axis="y", color="0.9", linewidth=0.6)
         ax.spines[["top", "right"]].set_visible(False)
         ax.margins(y=.15)
-        ax.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=4, frameon=False, fontsize=8)
+        ax.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=3, frameon=False, fontsize=8)
         fig.suptitle(f"{'МАКЕТ / MOCK — ' if kind == 'MOCK' else ''}{split}, n={summary['queries']}")
         for extension in ("png", "pdf"):
             fig.savefig(output / f"figure_2.{extension}", dpi=220)
         plt.close(fig)
+
+
+def live_gap_mismatches(run_dir, split, rows, gap_selected):
+    """Queries where a saved live cascade_gap run disagrees with the offline rebuild, or None without such a run."""
+    live = load_results(run_dir / f"{split}.cascade_gap.jsonl")
+    if not live:
+        return None
+    mismatches = [row["id"] for row, called in zip(rows, gap_selected)
+                  if row["id"] not in live or live[row["id"]]["ranking"] != row["llm" if called else "bert"]["ranking"]]
+    if mismatches:
+        print(f"WARNING: saved {split}.cascade_gap differs from the offline rebuild on {len(mismatches)} queries "
+              f"(e.g. {mismatches[0]}); the tables use the rebuild from {split}.llm.jsonl.")
+    return len(mismatches)
 
 
 def report(config, split="test", repeats=1000, mock=False):
@@ -99,10 +117,12 @@ def report(config, split="test", repeats=1000, mock=False):
     kind = data_kind(config, rows, mock)
     bert, llm = arrays(rows)
     gains = llm - bert
-    gap_selected = np.array([row["bert"]["gap"] <= summary["threshold"] for row in rows])
+    gaps = np.array([row["bert"]["gap"] for row in rows])
+    gap_selected = gaps <= summary["threshold"]
     gate_model = json.loads((run_dir / "gate.json").read_text())
-    if gate_model["data_kind"] == "MOCK":
+    if "MOCK" in (gate_model["data_kind"], summary["data_kind"]):
         kind = "MOCK"
+    live = live_gap_mismatches(run_dir, split, rows, gap_selected)
     signals = gate_scores(config, split, rows, oof=split == "validation")
     if signals is None:
         return
@@ -149,6 +169,13 @@ def report(config, split="test", repeats=1000, mock=False):
     else:
         diagnostics.append({"data_kind": kind, "block": "stability", "item": "Not computed; run rerank resplit",
                             "gap": None, "gate": None})
+    gate_selected = weights["gate"]
+    for name, count in (("gap", int(gap_selected.sum())), ("gate", int(gate_selected.sum()))):
+        diagnostics.append({
+            "data_kind": kind, "block": "equal budget", "item": f"nDCG@10 with {count} calls ({name} budget)",
+            "gap": float(np.where(budget_masks(-gaps, count), llm, bert).mean()),
+            "gate": float(np.where(budget_masks(-signals, count), llm, bert).mean()),
+        })
     diagnostics.extend([
         {"data_kind": kind, "block": "signal", "item": f"AUC: gap gain>0, gate gain>{gate_model['min_gain']:g}",
          "gap": summary["auc_gap"], "gate": summary["auc_gate"]},
@@ -158,12 +185,13 @@ def report(config, split="test", repeats=1000, mock=False):
     ])
     output = run_dir / "report" / split
     output.mkdir(parents=True, exist_ok=True)
-    write_csv(output / "table_1.csv", table)
-    write_csv(output / "table_2.csv", diagnostics)
     for row in table + diagnostics:
         row["data_kind"] = kind
+    write_csv(output / "table_1.csv", table)
+    write_csv(output / "table_2.csv", diagnostics)
     marker = "MOCK. " if kind == "MOCK" else ""
-    latex_table(output / "table_1.tex", marker + "Saved ranking results; intervals: paired query bootstrap, 95%.",
+    latex_table(output / "table_1.tex", marker + "Saved ranking results; intervals: paired query bootstrap, 95%. Gap and gate use their own "
+                "frozen thresholds, so their call fractions differ; Table 2 compares them at equal budgets.",
                 ["Method", "nDCG@10 [95%]", "Delta vs LLM [95%]", "Both@5", "EM", "F1", "Call frac.", "120B tok/q", "20B tok/q", "120B fail", "20B fail"], [
                     [LABELS[row["method"]], f"{row['ndcg@10']:.3f} [{row['ndcg_ci95_low']:.3f}, {row['ndcg_ci95_high']:.3f}]",
                      f"{row['difference_vs_llm']:.3f} [{row['difference_ci95_low']:.3f}, {row['difference_ci95_high']:.3f}]",
@@ -173,7 +201,10 @@ def report(config, split="test", repeats=1000, mock=False):
                     [row["block"], row["item"], format_number(row["gap"]), format_number(row["gate"])] for row in diagnostics])
     write_json(output / "report.json", {
         "data_kind": kind, "split": split, "gate_min_gain": gate_model["min_gain"], "table_1": table, "table_2": diagnostics,
+        "live_cascade_gap_mismatches": live,
         "notes": ["Missing saved answers are left blank, never generated or estimated.",
+                  ("Gap and gate rows are rebuilt from saved bert/llm results; live_cascade_gap_mismatches counts "
+                   "queries where a saved cascade_gap run ranked differently (null when there is no such run)."),
                   "Random uses the empirical inclusion weights of the fixed-seed draws at the frozen gap budget.",
                   "Oracle uses exactly the same number of calls as the frozen gap rule.",
                   "Stability describes the saved resplit pool, not independent trials or gate refits.",
