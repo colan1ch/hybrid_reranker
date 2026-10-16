@@ -34,6 +34,8 @@ def test_changing_the_device_does_not_block_the_run(invoke, capsys):
     invoke("evaluate", "--split", "test", capsys=capsys)
     output = invoke("evaluate", "--split", "test", capsys=capsys, device="cuda", batch_size=8)
     assert "Config changed" not in output and "differs from the saved config" in output
+    output = invoke("evaluate", "--split", "test", capsys=capsys, data_dir="/content/drive/MyDrive/data")
+    assert "Config changed" not in output and "data_dir" in output
 
 
 def test_changing_a_setting_that_affects_results_still_blocks_the_run(invoke, capsys):

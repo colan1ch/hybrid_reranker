@@ -1,7 +1,8 @@
 from pathlib import Path
 
-# Settings that change speed or hardware but not the results; changing them must not block a run.
-VOLATILE_KEYS = ("device", "batch_size")
+# Settings that change speed, hardware or where caches live, but not the results; changing them must not block
+# a run. data_dir differs when one person computes on Colab or Kaggle and hands run_dir to another machine.
+VOLATILE_KEYS = ("device", "batch_size", "data_dir")
 
 
 def comparable(config):

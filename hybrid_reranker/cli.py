@@ -82,7 +82,7 @@ def main():
             return
         changed = [key for key in VOLATILE_KEYS if saved.get(key) != config.get(key)]
         if changed:
-            print(f"Note: {', '.join(changed)} differs from the saved config; it affects speed only, so the run continues.")
+            print(f"Note: {', '.join(changed)} differs from the saved config; it does not affect the results, so the run continues.")
     else:
         shutil.copyfile(config_path, snapshot)
         write_json(run_dir / "environment.json", {
