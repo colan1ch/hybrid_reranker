@@ -1,5 +1,10 @@
 import json
 
+try:
+    import fcntl
+except ImportError:  # Windows: no advisory locks, run one API command at a time there
+    fcntl = None
+
 
 def read_jsonl(path):
     if path.exists():
@@ -13,9 +18,13 @@ def load_results(path):
 
 
 def append_jsonl(path, row):
+    """Append one line; the lock keeps lines whole when two commands share a file such as data/api.jsonl."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a") as file:
+        if fcntl:
+            fcntl.flock(file, fcntl.LOCK_EX)
         file.write(json.dumps(row, ensure_ascii=False) + "\n")
+        file.flush()
 
 
 def write_jsonl(path, rows):
