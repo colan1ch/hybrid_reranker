@@ -110,7 +110,7 @@
 4. `rerank estimate`: после шага 3 размер запроса к генератору считается по сохранённым контекстам.
 5. `run --split validation --method llm --allow-api`: 100 вызовов, около 1,2 суток лимита.
 6. `tune`, `gate` (без API).
-7. `run --split test --method llm --allow-api`: 300 вызовов, около 3,6 суток (при `test_size = 200` около 2,4 суток; актуальный график в `WORK_PLAN.md`).
+7. `run --split test --method llm --allow-api`: 300 вызовов, около 3,6 суток (график по дням в `WORK_PLAN.md`).
 8. `run --split test --method all --answers --allow-api`: каскады берут ранжирование из кэша; генератор отвечает для dense, bert, llm (около 900 вызовов, лимит у 20B отдельный).
 9. `evaluate`, `controls`, `resplit`, `report` (без API).
 10. Отдельно: `llm_input_order = "bert"` на подвыборке в новой `run_dir`.
