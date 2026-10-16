@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import time
 from pathlib import Path
 
@@ -64,10 +65,16 @@ class LLM:
         self.path = Path(config["data_dir"]) / "api.jsonl"
         self.records = read_jsonl(self.path)
         self.cache = {row["key"]: row for row in self.records}
+        # Limits belong to an API key. Records merged from another machine carry that key's short hash
+        # (never the key itself), so they fill the cache but do not count against this key's quota.
+        self.account = hashlib.sha256(os.environ.get("GROQ_API_KEY", "").encode()).hexdigest()[:12]
         self.next_call = max((row["timestamp"] + max(
             60 / config["requests_per_minute"], row["reserved_tokens"] * 60 / config["tokens_per_minute"],
-        ) for row in self.records), default=0)
+        ) for row in self.own_records()), default=0)
         self.client = None
+
+    def own_records(self):
+        return [row for row in self.records if row.get("account", self.account) == self.account]
 
     def complete(self, model, system, prompt, max_tokens, schema=None):
         request = {
@@ -86,7 +93,7 @@ class LLM:
             return self.cache[key]
         encoding = tiktoken.get_encoding("o200k_harmony")
         reserve = len(encoding.encode(system + prompt, disallowed_special=())) + max_tokens + 256
-        recent = [row for row in self.records if row["model"] == model and row["timestamp"] > time.time() - 86400]
+        recent = [row for row in self.own_records() if row["model"] == model and row["timestamp"] > time.time() - 86400]
         tokens = sum(row["usage"]["total_tokens"] for row in recent)
         if len(recent) >= self.config["requests_per_day"] or tokens + reserve > self.config["tokens_per_day"]:
             print(f"Local quota reached for {model}: {len(recent)} requests, {tokens} tokens. Resume later.")
@@ -97,7 +104,7 @@ class LLM:
         started = time.time()
         response = self.client.chat.completions.create(**request)
         row = {
-            "key": key, "model": model, "timestamp": time.time(),
+            "key": key, "account": self.account, "model": model, "timestamp": time.time(),
             "seconds": time.time() - started, "reserved_tokens": reserve,
             "content": response.choices[0].message.content,
             "finish_reason": response.choices[0].finish_reason, "usage": response.usage.model_dump(),

@@ -69,3 +69,21 @@ def test_parse_ranking_reasons():
 def test_sum_usage_ignores_missing_values():
     assert sum_usage({"prompt_tokens": 5, "total_tokens": 7}, {"completion_tokens": None, "total_tokens": 1}) == {
         "prompt_tokens": 5, "completion_tokens": 0, "total_tokens": 8}
+
+
+def test_quota_counts_only_this_keys_requests(config, groq, monkeypatch, capsys):
+    import time
+
+    from hybrid_reranker.io import write_jsonl
+
+    monkeypatch.setenv("GROQ_API_KEY", "mine")
+    mine = LLM(config).account
+    full = {"model": config["llm_reranker"], "timestamp": time.time(), "reserved_tokens": 0,
+            "usage": {"total_tokens": config["tokens_per_day"]}, "content": "", "finish_reason": "stop"}
+    write_jsonl(LLM(config).path, [{**full, "key": "merged", "account": "someoneelse"}])
+    client = groq(lambda request: (permutation(), "stop"))
+    assert LLM(config).rerank("q?", documents())[0] is not None and len(client.requests) == 1
+    write_jsonl(LLM(config).path, [{**full, "key": "own", "account": mine}])
+    assert LLM(config).rerank("other question?", documents()) is None
+    assert "Local quota reached" in capsys.readouterr().out
+    assert len(client.requests) == 1

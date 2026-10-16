@@ -12,6 +12,13 @@ from .checks import VOLATILE_KEYS, comparable, needs_api, prerequisites
 from .io import write_json
 
 
+def part(text):
+    index, _, count = text.partition("/")
+    if not (index.isdigit() and count.isdigit() and 1 <= int(index) <= int(count)):
+        raise argparse.ArgumentTypeError("expected i/n with 1 <= i <= n, e.g. 1/2")
+    return int(index), int(count)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Selective LLM reranking on BEIR HotpotQA")
     parser.add_argument("--config", default="config.toml")
@@ -52,6 +59,10 @@ def main():
                 "--allow-api", action="store_true",
                 help="confirm that the Groq account is on the free plan; required for anything that calls the API",
             )
+            command.add_argument("--part", type=part, help="i/n: only every n-th question starting at i, e.g. 1/2")
+    command = commands.add_parser("merge", help="add another machine's results for the same questions")
+    command.add_argument("--from", dest="source", required=True, help="the other machine's run_dir")
+    command.add_argument("--api", help="the other machine's data/api.jsonl, to reuse its cached responses")
     args = parser.parse_args()
     if needs_api(args.command, getattr(args, "method", ""), getattr(args, "answers", False)):
         load_dotenv()
@@ -105,8 +116,11 @@ def main():
     elif args.command == "run":
         from .run import run
         for method in selected:
-            if not run(config, args.split, method, args.answers):
+            if not run(config, args.split, method, args.answers, args.part):
                 break
+    elif args.command == "merge":
+        from .merge import merge
+        merge(config, args.source, args.api)
     elif args.command == "tune":
         from .evaluate import tune
         tune(config)

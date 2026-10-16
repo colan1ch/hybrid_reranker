@@ -9,12 +9,18 @@ from .io import append_jsonl, load_results, read_jsonl
 from .llm import LLM, context
 
 
-def run(config, split, method, answers=False):
+def run(config, split, method, answers=False, part=None):
+    """`part=(index, count)` processes every count-th question starting at index (1-based), so two machines
+    with their own API keys can share a split; `rerank merge` joins the results afterwards."""
     if method == "cascade_gate":
         from .gate import run_gate
         return run_gate(config, split, answers)
     run_dir = Path(config["run_dir"])
     queries = read_jsonl(run_dir / f"{split}.jsonl")
+    if part:
+        index, count = part
+        queries = [query for position, query in enumerate(queries) if position % count == index - 1]
+        print(f"Part {index}/{count}: {len(queries)} {split} queries.")
     candidates = load_results(run_dir / "candidates.jsonl")
     bert = load_results(run_dir / f"{split}.bert.jsonl")
     output = run_dir / f"{split}.{method}.jsonl"

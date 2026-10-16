@@ -71,3 +71,9 @@ def test_llm_run_needs_bert_results_first(config, run_dir, groq, capsys):
     client = groq(lambda request: (permutation(), "stop"))
     assert run(config, "validation", "llm") is False
     assert "--method bert" in capsys.readouterr().out and not client.requests
+
+
+def test_a_part_processes_only_its_share_of_the_questions(config, run_dir):
+    prepare_run_dir(run_dir)
+    assert run(config, "validation", "dense", part=(2, 2)) is True
+    assert list(load_results(run_dir / "validation.dense.jsonl")) == ["q2"]
