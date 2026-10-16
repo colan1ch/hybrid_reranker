@@ -3,6 +3,8 @@ run_dir = "runs/main"
 seed = 42
 validation_size = 100
 test_size = 300
+# Both samples come from BEIR test (disjoint), so the threshold is tuned on the same kind of questions it is applied to.
+sample_source = "beir_test"
 
 beir_revision = "a7e8bab212f5a89f9be1bc9b654aa6dfa317f32b"
 qrels_revision = "b15429e9244c8ec966985d7778427c3b1543b314"

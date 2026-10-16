@@ -43,7 +43,7 @@ def install_sources(monkeypatch, tmp_path):
 
 def test_prepare_skips_questions_whose_supporting_fact_does_not_exist(monkeypatch, tmp_path, config, run_dir, capsys):
     install_sources(monkeypatch, tmp_path)
-    config.update(validation_size=10, test_size=10)
+    config.update(validation_size=10, test_size=10, sample_source="original")
     data.prepare(config)
     ids = {split: {json.loads(line)["id"] for line in (run_dir / f"{split}.jsonl").read_text().splitlines()} for split in ("validation", "test")}
     assert ids == {"validation": {"a1", "a2"}, "test": {"b1", "b3"}}
@@ -54,7 +54,7 @@ def test_prepare_skips_questions_whose_supporting_fact_does_not_exist(monkeypatc
 
 def test_prepare_keeps_the_skipped_list_when_rerun_from_saved_samples(monkeypatch, tmp_path, config, run_dir):
     install_sources(monkeypatch, tmp_path)
-    config.update(validation_size=10, test_size=10)
+    config.update(validation_size=10, test_size=10, sample_source="original")
     data.prepare(config)
     before = (run_dir / "skipped_queries.json").read_text()
     data.prepare(config)
@@ -63,7 +63,7 @@ def test_prepare_keeps_the_skipped_list_when_rerun_from_saved_samples(monkeypatc
 
 def test_kept_facts_carry_the_sentence_text(monkeypatch, tmp_path, config, run_dir):
     install_sources(monkeypatch, tmp_path)
-    config.update(validation_size=10, test_size=10)
+    config.update(validation_size=10, test_size=10, sample_source="original")
     data.prepare(config)
     first = next(json.loads(line) for line in (run_dir / "validation.jsonl").read_text().splitlines() if json.loads(line)["id"] == "a1")
     assert first["supporting_facts"] == [

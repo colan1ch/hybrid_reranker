@@ -82,6 +82,30 @@ def figure_2(summary, output, kind, split):
         plt.close(fig)
 
 
+CRITERIA = (
+    ("loss", "nDCG@10 minus always-LLM [95%] >= -tolerance"),
+    ("calls", "LLM call fraction < 0.5"),
+    ("random", "nDCG@10 minus random at the same calls [95%] > 0"),
+)
+
+
+def success_criteria(values, method, indices, tolerance):
+    """The success criterion fixed before the runs (RESULTS_PLAN.md, section 0), checked on saved results."""
+    quality = values[method][:, 0]
+    fraction = float(values[method][:, FIELDS.index("llm_fraction")].mean())
+    # Random k-of-n calls include every query with probability k/n, so its expected per-query quality is exact.
+    random = values["bert"][:, 0] + fraction * (values["llm"][:, 0] - values["bert"][:, 0])
+    result = {}
+    for key, delta in (("loss", quality - values["llm"][:, 0]), ("random", quality - random)):
+        low, high = np.quantile(delta[indices].mean(axis=1), [.025, .975])
+        passed = bool(delta.mean() >= -tolerance) if key == "loss" else bool(low > 0)
+        result[key] = {"value": float(delta.mean()), "ci95_low": float(low), "ci95_high": float(high), "passed": passed,
+                       "text": f"{delta.mean():.3f} [{low:.3f}, {high:.3f}] {'yes' if passed else 'no'}"}
+    result["calls"] = {"value": fraction, "passed": fraction < .5, "text": f"{fraction:.3f} {'yes' if fraction < .5 else 'no'}"}
+    result["passed"] = all(result[key]["passed"] for key, _ in CRITERIA)
+    return result
+
+
 def live_gap_mismatches(run_dir, split, rows, gap_selected):
     """Queries where a saved live cascade_gap run disagrees with the offline rebuild, or None without such a run."""
     live = load_results(run_dir / f"{split}.cascade_gap.jsonl")
@@ -188,6 +212,11 @@ def report(config, split="test", repeats=1000, mock=False):
         {"data_kind": kind, "block": "signal", "item": "OOF AUC on validation", "gap": None,
          "gate": gate_model["oof_auc"] if gate_model else None},
     ])
+    criteria = {method: success_criteria(values, method, indices, config["ndcg_tolerance"])
+                for method in ("gap", "gate") if method in values}
+    for key, item in CRITERIA:
+        diagnostics.append({"data_kind": kind, "block": "criterion", "item": item, **{
+            method: criteria[method][key]["text"] if method in criteria else None for method in ("gap", "gate")}})
     output = run_dir / "report" / split
     output.mkdir(parents=True, exist_ok=True)
     for row in table + diagnostics:
@@ -206,7 +235,7 @@ def report(config, split="test", repeats=1000, mock=False):
                     [row["block"], row["item"], format_number(row["gap"]), format_number(row["gate"])] for row in diagnostics])
     write_json(output / "report.json", {
         "data_kind": kind, "split": split, "gate_min_gain": gate_model["min_gain"] if gate_model else None, "table_1": table, "table_2": diagnostics,
-        "live_cascade_gap_mismatches": live,
+        "live_cascade_gap_mismatches": live, "success_criteria": criteria,
         "notes": ["Missing saved answers are left blank, never generated or estimated.",
                   ("Gap and gate rows are rebuilt from saved bert/llm results; live_cascade_gap_mismatches counts "
                    "queries where a saved cascade_gap run ranked differently (null when there is no such run)."),

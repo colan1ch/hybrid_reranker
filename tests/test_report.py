@@ -27,7 +27,10 @@ def test_report_exports_marked_mock_figure_and_both_tables(config, run_dir, offl
     output = run_dir / "report/test"
     saved = json.loads((output / "report.json").read_text())
     assert saved["data_kind"] == "MOCK" and len(saved["table_1"]) == 7
-    assert {row["block"] for row in saved["table_2"]} == {"decisions", "stability", "signal", "equal budget"}
+    assert {row["block"] for row in saved["table_2"]} == {"decisions", "stability", "signal", "equal budget", "criterion"}
+    gap = saved["success_criteria"]["gap"]
+    assert gap["loss"]["value"] == pytest.approx(.2) and gap["calls"]["value"] == pytest.approx(.2)
+    assert gap["random"]["ci95_low"] > 0 and gap["passed"]
     equal = [row for row in saved["table_2"] if row["block"] == "equal budget"]
     assert equal[0]["item"] == "nDCG@10 with 10 calls (gap budget)" and equal[0]["gap"] == 1
     assert (output / "figure_2.png").read_bytes().startswith(b"\x89PNG")
@@ -121,3 +124,13 @@ def test_report_warns_when_a_live_cascade_gap_run_disagrees(config, run_dir, off
     report(config, repeats=10)
     assert json.loads((run_dir / "report/test/report.json").read_text())["live_cascade_gap_mismatches"] == 10
     assert "differs from the offline rebuild on 10 queries" in capsys.readouterr().out
+
+
+def test_success_criterion_fails_when_the_rule_calls_too_often(config, run_dir, offline_run):
+    prepare_report(config, run_dir, offline_run)
+    (run_dir / "thresholds.json").write_text(json.dumps({"gap": {"threshold": 3.0}}))  # 30 of 50 queries
+    report(config, repeats=10)
+    gap = json.loads((run_dir / "report/test/report.json").read_text())["success_criteria"]["gap"]
+    assert gap["calls"]["value"] == pytest.approx(.6) and not gap["calls"]["passed"] and not gap["passed"]
+    rows = list(csv.DictReader((run_dir / "report/test/table_2.csv").open()))
+    assert next(row for row in rows if row["item"] == "LLM call fraction < 0.5")["gap"] == "0.600 no"
