@@ -103,3 +103,17 @@ def test_estimate_does_not_create_or_change_a_run(invoke, config, capsys):
     output = invoke("estimate", "--answer-queries", "0", capsys=capsys)
     assert '"estimate_only": true' in output
     assert not Path(config["run_dir"]).exists()
+
+
+def test_a_paused_run_exits_with_the_retry_status_and_a_finished_one_with_zero(invoke, config, run_dir, capsys, monkeypatch):
+    write_jsonl(run_dir / "test.jsonl", [{"id": "q1"}])
+    write_jsonl(run_dir / "candidates.jsonl", [])
+    monkeypatch.setattr("hybrid_reranker.run.run", lambda *args, **kwargs: None)
+    with pytest.raises(SystemExit) as stopped:
+        invoke("run", "--split", "test", "--method", "dense", capsys=capsys)
+    assert stopped.value.code == cli.RESUME_LATER == 75
+    assert "run the same command again later" in capsys.readouterr().out
+    monkeypatch.setattr("hybrid_reranker.run.run", lambda *args, **kwargs: True)
+    invoke("run", "--split", "test", "--method", "dense", capsys=capsys)
+    monkeypatch.setattr("hybrid_reranker.run.run", lambda *args, **kwargs: False)
+    invoke("run", "--split", "test", "--method", "dense", capsys=capsys)  # a problem for a person: no retry status

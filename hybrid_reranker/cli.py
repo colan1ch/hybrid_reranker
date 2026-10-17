@@ -2,6 +2,7 @@ import argparse
 import os
 import platform
 import shutil
+import sys
 import tomllib
 from importlib.metadata import version
 from pathlib import Path
@@ -10,6 +11,10 @@ from dotenv import load_dotenv
 
 from .checks import VOLATILE_KEYS, comparable, needs_api, prerequisites
 from .io import write_json
+
+# Exit status of a run that stopped only because the daily quota or the connection ran out. Shell loops such as
+# `until rerank run ...; do sleep 600; done` keep going on any non-zero status and finish on success.
+RESUME_LATER = 75
 
 
 def part(text):
@@ -116,7 +121,11 @@ def main():
     elif args.command == "run":
         from .run import run
         for method in selected:
-            if not run(config, args.split, method, args.answers, args.part):
+            status = run(config, args.split, method, args.answers, args.part)
+            if not status:
+                if status is None:
+                    print(f"Paused: run the same command again later (exit code {RESUME_LATER}).")
+                    sys.exit(RESUME_LATER)
                 break
     elif args.command == "merge":
         from .merge import merge

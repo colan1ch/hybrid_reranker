@@ -89,3 +89,11 @@ def test_a_run_stops_after_many_failed_answers_in_a_row(config, run_dir, groq, c
     assert run(config, "validation", "llm") is False
     assert len(load_results(run_dir / "validation.llm.jsonl")) == 8 and len(client.requests) == 16
     assert "failed answers in a row" in capsys.readouterr().out
+
+
+def test_a_run_that_runs_out_of_quota_reports_that_it_should_resume_later(config, run_dir, groq):
+    prepare_run_dir(run_dir)
+    config["tokens_per_day"] = 100
+    client = groq(behaviour)
+    assert run(config, "validation", "llm") is None
+    assert not client.requests and not (run_dir / "validation.llm.jsonl").exists()

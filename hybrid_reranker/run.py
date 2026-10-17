@@ -13,7 +13,10 @@ MAX_FAILURES_IN_A_ROW = 8
 
 
 def run(config, split, method, answers=False, part=None):
-    """`part=(index, count)` processes every count-th question starting at index (1-based), so two machines
+    """Returns True when finished, None when it stopped to resume later (quota or connection), False on a problem
+    that needs a person.
+
+    `part=(index, count)` processes every count-th question starting at index (1-based), so two machines
     with their own API keys can share a split; `rerank merge` joins the results afterwards."""
     if method == "cascade_gate":
         from .gate import run_gate
@@ -92,7 +95,7 @@ def run(config, split, method, answers=False, part=None):
                         shown = [by_id[doc_id] for doc_id in bert[query_id]["ranking"]]
                     result = llm.rerank(query["question"], shown)
                     if result is None:
-                        return False
+                        return None  # quota or connection: not finished, resume later
                     ranking, row["rerank_usage"], error = result
                     row["llm_called"] = True
                     if ranking is None:
@@ -107,7 +110,7 @@ def run(config, split, method, answers=False, part=None):
         if answers:
             result = llm.answer(query["question"], row["context"])
             if result is None:
-                return False
+                return None  # quota or connection: not finished, resume later
             row["answer"], row["answer_usage"], error = result
             row["answer_failed"] = error is not None
             if error:
