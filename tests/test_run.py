@@ -77,3 +77,15 @@ def test_a_part_processes_only_its_share_of_the_questions(config, run_dir, token
     prepare_run_dir(run_dir)
     assert run(config, "validation", "dense", part=(2, 2)) is True
     assert list(load_results(run_dir / "validation.dense.jsonl")) == ["q2"]
+
+
+def test_a_run_stops_after_many_failed_answers_in_a_row(config, run_dir, groq, capsys):
+    queries = [{"id": f"q{i}", "question": f"question {i}?", "answer": "a", "qrels": {"d1": 1},
+                "supporting_facts": []} for i in range(12)]
+    write_jsonl(run_dir / "validation.jsonl", queries)
+    write_jsonl(run_dir / "candidates.jsonl", [{"id": q["id"], "documents": documents()} for q in queries])
+    write_jsonl(run_dir / "validation.bert.jsonl", [{"id": q["id"], "ranking": [f"d{i}" for i in range(1, 21)]} for q in queries])
+    client = groq(lambda request: (json.dumps({"ranking": [1, 1, 2]}), "stop"))
+    assert run(config, "validation", "llm") is False
+    assert len(load_results(run_dir / "validation.llm.jsonl")) == 8 and len(client.requests) == 16
+    assert "failed answers in a row" in capsys.readouterr().out

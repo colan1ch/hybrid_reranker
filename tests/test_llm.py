@@ -1,7 +1,9 @@
 import json
 
+import pytest
 from conftest import documents, permutation
 
+from hybrid_reranker.io import read_jsonl
 from hybrid_reranker.llm import LLM, parse_ranking, sum_usage
 
 
@@ -87,3 +89,88 @@ def test_quota_counts_only_this_keys_requests(config, groq, monkeypatch, capsys)
     assert LLM(config).rerank("other question?", documents()) is None
     assert "Local quota reached" in capsys.readouterr().out
     assert len(client.requests) == 1
+
+
+def http_error(kind, status=400, body=None, headers=None):
+    import groq
+    import httpx
+
+    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    if kind == "timeout":
+        return groq.APITimeoutError(request=request)
+    response = httpx.Response(status, request=request, headers=headers or {})
+    return {400: groq.BadRequestError, 429: groq.RateLimitError, 500: groq.InternalServerError,
+            401: groq.AuthenticationError}[status]("error", response=response, body=body)
+
+
+JSON_FAILED = {"error": {"message": "Failed to validate JSON.", "type": "invalid_request_error",
+                         "code": "json_validate_failed", "failed_generation": ""}}
+
+
+def script(steps):
+    """A behaviour that plays one step per request: an exception to raise or a (content, finish_reason) pair."""
+    steps = iter(steps)
+
+    def behave(request):
+        step = next(steps)
+        if isinstance(step, Exception):
+            raise step
+        return step
+    return behave
+
+
+@pytest.fixture
+def sleeps(monkeypatch):
+    waited = []
+    monkeypatch.setattr("hybrid_reranker.llm.time.sleep", lambda seconds: waited.append(seconds))
+    return waited
+
+
+def test_invalid_json_from_groq_is_a_failed_answer_that_is_retried_once(config, groq, sleeps):
+    client = groq(script([http_error("400", 400, JSON_FAILED), (permutation(), "stop")]))
+    ranking, usage, error = LLM(config).rerank("q?", documents())
+    assert ranking is not None and error is None and len(client.requests) == 2
+    assert usage["total_tokens"] > 1050  # the failed attempt is counted as well
+
+
+def test_invalid_json_twice_falls_back_instead_of_crashing_and_is_remembered(config, groq, sleeps):
+    client = groq(script([http_error("400", 400, JSON_FAILED)] * 2))
+    llm = LLM(config)
+    ranking, _, error = llm.rerank("q?", documents())
+    assert ranking is None and error == "finish_reason=error:json_validate_failed"
+    assert llm.rerank("q?", documents())[2] == error and len(client.requests) == 2  # served from the cache
+
+
+def test_network_trouble_is_retried_with_pauses_and_not_remembered(config, groq, sleeps):
+    client = groq(script([http_error("timeout"), http_error("500", 500), (permutation(), "stop")]))
+    llm = LLM(config)
+    assert llm.rerank("q?", documents())[0] is not None and len(client.requests) == 3
+    assert [wait for wait in sleeps if wait >= 5] == [5, 15]
+    assert len(read_jsonl(llm.path)) == 1  # only the answer, not the failed attempts
+
+
+def test_a_network_that_stays_down_stops_the_run_for_later(config, groq, sleeps, capsys):
+    client = groq(script([http_error("timeout")] * 10))
+    assert LLM(config).rerank("q?", documents()) is None
+    assert len(client.requests) == 6 and "Resume later" in capsys.readouterr().out
+
+
+def test_a_short_rate_limit_is_waited_out_and_a_long_one_stops_the_run(config, groq, sleeps, capsys):
+    short = http_error("429", 429, headers={"retry-after": "7"})
+    groq(script([short, (permutation(), "stop")]))
+    assert LLM(config).rerank("q?", documents())[0] is not None and 8 in sleeps
+    long = http_error("429", 429, headers={"retry-after": "7200"})
+    groq(script([long]))
+    assert LLM(config).rerank("another question?", documents()) is None
+    assert "Resume later" in capsys.readouterr().out
+
+
+def test_a_setup_problem_is_not_hidden(config, groq, sleeps):
+    import groq as groq_module
+
+    groq(script([http_error("401", 401)]))
+    with pytest.raises(groq_module.AuthenticationError):
+        LLM(config).rerank("q?", documents())
+    groq(script([http_error("400", 400, {"error": {"code": "invalid_request", "message": "bad"}})]))
+    with pytest.raises(groq_module.BadRequestError):
+        LLM(config).rerank("other?", documents())

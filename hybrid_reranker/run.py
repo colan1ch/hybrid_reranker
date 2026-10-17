@@ -8,6 +8,9 @@ from tqdm import tqdm
 from .io import append_jsonl, load_results, read_jsonl
 from .llm import LLM, context
 
+# A long unbroken run of failed answers points at a systematic problem; stop before spending the day's quota on it.
+MAX_FAILURES_IN_A_ROW = 8
+
 
 def run(config, split, method, answers=False, part=None):
     """`part=(index, count)` processes every count-th question starting at index (1-based), so two machines
@@ -50,6 +53,7 @@ def run(config, split, method, answers=False, part=None):
         threshold = json.loads((run_dir / "thresholds.json").read_text())[rule]["threshold"]
     llm = LLM(config)
     model = None
+    streak = 0
     for query in tqdm(queries, desc=f"{split}/{method}"):
         query_id = query["id"]
         if query_id in saved and (not answers or "answer" in saved[query_id]):
@@ -109,5 +113,10 @@ def run(config, split, method, answers=False, part=None):
             if error:
                 row["answer_error"] = error
             append_jsonl(output, row)
+        streak = streak + 1 if row.get("llm_failed") or row.get("answer_failed") else 0
+        if streak >= MAX_FAILURES_IN_A_ROW:
+            print(f"{streak} failed answers in a row ({row.get('llm_error') or row.get('answer_error')}); stopping. "
+                  "Check the error, then run the same command again.")
+            return False
     print(f"Saved {split}/{method}: {output}")
     return True
