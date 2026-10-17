@@ -174,3 +174,13 @@ def test_a_setup_problem_is_not_hidden(config, groq, sleeps):
     groq(script([http_error("400", 400, {"error": {"code": "invalid_request", "message": "bad"}})]))
     with pytest.raises(groq_module.BadRequestError):
         LLM(config).rerank("other?", documents())
+
+
+def test_the_local_daily_guard_can_be_left_to_groq(config, groq, monkeypatch, sleeps):
+    config["tokens_per_day"] = 100
+    client = groq(lambda request: (permutation(), "stop"))
+    assert LLM(config).rerank("q?", documents()) is None and not client.requests
+    monkeypatch.setenv("RERANK_LOCAL_QUOTA", "off")
+    assert LLM(config).rerank("q?", documents())[0] is not None and len(client.requests) == 1
+    groq(script([http_error("429", 429, headers={"retry-after": "7200"})]))
+    assert LLM(config).rerank("another?", documents()) is None  # Groq says no: pause, as before
