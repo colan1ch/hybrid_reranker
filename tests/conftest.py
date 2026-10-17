@@ -75,8 +75,8 @@ def tokenizer():
     tiktoken = pytest.importorskip("tiktoken")
     try:
         tiktoken.get_encoding("o200k_harmony")
-    except Exception as error:  # noqa: BLE001 - any download problem means no network
-        pytest.skip(f"tokenizer unavailable: {error}")
+    except (Exception, pytest.fail.Exception) as error:  # noqa: BLE001 - a blocked or failed download means no vocabulary
+        pytest.skip(f"tokenizer vocabulary not downloaded yet (run `rerank estimate` once with internet): {error}")
 
 
 class FakeGroq:
