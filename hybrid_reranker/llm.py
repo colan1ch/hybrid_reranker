@@ -53,11 +53,15 @@ def retry_after(error):
         return None
 
 
+FAILED_GENERATION_CODES = ("json_validate_failed", "output_parse_failed")
+
+
 def failed_generation(error):
-    """True when Groq refused the request only because the model's answer was not valid JSON."""
+    """The Groq error code when it refused the request only because the model's answer was not valid JSON, else None."""
     body = error.body if isinstance(error.body, dict) else {}
     detail = body.get("error", body) if isinstance(body.get("error", body), dict) else {}
-    return detail.get("code") == "json_validate_failed"
+    code = detail.get("code")
+    return code if code in FAILED_GENERATION_CODES else None
 
 
 def sum_usage(*usages):
@@ -147,7 +151,7 @@ class LLM:
         """Send one request. Returns the response fields to store, or None when the run should stop and resume later.
 
         Network trouble, timeouts, server errors and short rate limits are retried after a pause. The model
-        producing invalid JSON (HTTP 400 json_validate_failed) is a failed answer, not a crash: it is stored like
+        producing invalid JSON (HTTP 400 json_validate_failed or output_parse_failed) is a failed answer, not a crash: it is stored like
         any other bad answer so the caller can retry with a different request and then fall back. Anything else
         (wrong key, unknown model, malformed request) is a setup problem and is raised.
         """
@@ -155,11 +159,12 @@ class LLM:
             try:
                 response = self.client.chat.completions.create(**request)
             except groq.BadRequestError as error:
-                if not failed_generation(error):
+                code = failed_generation(error)
+                if code is None:
                     raise
                 print("Groq could not produce valid JSON for this request; treating it as a failed answer.")
                 usage = {"prompt_tokens": prompt_tokens, "completion_tokens": 0, "total_tokens": prompt_tokens}
-                return {"content": "", "finish_reason": "error:json_validate_failed", "usage": usage, "estimated_usage": True}
+                return {"content": "", "finish_reason": f"error:{code}", "usage": usage, "estimated_usage": True}
             except groq.RateLimitError as error:
                 delay = retry_after(error)
                 if wait is None or delay is None or delay > LONGEST_RATE_LIMIT_WAIT:

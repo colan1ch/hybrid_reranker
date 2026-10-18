@@ -141,6 +141,14 @@ def test_invalid_json_twice_falls_back_instead_of_crashing_and_is_remembered(con
     assert llm.rerank("q?", documents())[2] == error and len(client.requests) == 2  # served from the cache
 
 
+def test_output_parse_failed_is_treated_like_invalid_json(config, groq, sleeps):
+    body = {"error": {"message": "Failed to parse output", "type": "invalid_request_error",
+                      "code": "output_parse_failed", "failed_generation": "We need to rank..."}}
+    client = groq(script([http_error("400", 400, body)] * 2))
+    ranking, _, error = LLM(config).rerank("q?", documents())
+    assert ranking is None and error == "finish_reason=error:output_parse_failed" and len(client.requests) == 2
+
+
 def test_network_trouble_is_retried_with_pauses_and_not_remembered(config, groq, sleeps):
     client = groq(script([http_error("timeout"), http_error("500", 500), (permutation(), "stop")]))
     llm = LLM(config)
