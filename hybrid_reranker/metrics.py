@@ -48,7 +48,11 @@ def support_recall(passages, facts):
 
 def query_metrics(query, result, answers=False):
     metrics = ranking_metrics(result["ranking"], query["qrels"])
-    metrics["support_recall@5"] = support_recall(result["context"], query["supporting_facts"])
+    if "supporting_facts" in query:
+        metrics["support_recall@5"] = support_recall(result["context"], query["supporting_facts"])
+    else:  # datasets whose labels are whole documents (SciFact): the share of relevant documents in the context
+        relevant = {doc_id for doc_id, score in query["qrels"].items() if score > 0}
+        metrics["support_recall@5"] = len(relevant & {passage["id"] for passage in result["context"]}) / len(relevant)
     metrics["llm_fraction"] = float(result["llm_called"])
     metrics["llm_failed"] = float(result.get("llm_failed", False))
     usage = result["rerank_usage"]

@@ -22,7 +22,7 @@ def retrieve(config):
         print(f"No queries in {run_dir}. Run `rerank prepare` first.")
         return
     corpus_path = download(
-        config, "BeIR/hotpotqa", "corpus/corpus-00000-of-00001.parquet", "beir_revision",
+        config, f"BeIR/{config.get('dataset', 'hotpotqa')}", "corpus/corpus-00000-of-00001.parquet", "beir_revision",
     )
     model = SentenceTransformer(
         config["retriever"], device=config["device"], revision=config["retriever_revision"],

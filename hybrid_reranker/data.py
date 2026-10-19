@@ -23,8 +23,8 @@ def parquet_rows(path, batch_size=1024):
         yield from batch.to_pylist()
 
 
-def load_qrels(config, split):
-    path = download(config, "BeIR/hotpotqa-qrels", f"{split}.tsv", "qrels_revision")
+def load_qrels(config, split, repo="BeIR/hotpotqa-qrels"):
+    path = download(config, repo, f"{split}.tsv", "qrels_revision")
     qrels = defaultdict(dict)
     with open(path) as file:
         for row in csv.DictReader(file, delimiter="\t"):
@@ -114,7 +114,40 @@ def prepare_shared(config):
         print(f"BEIR test: skipped {len(skipped)} queries with broken supporting facts: {', '.join(skipped)}")
 
 
+def prepare_scifact(config):
+    """SciFact claims: validation and test are disjoint random samples of the 300 BEIR test claims.
+
+    A claim has no answer and no supporting sentences, only the abstracts that support or refute it, so the
+    generator step does not apply and `supporting_facts` is absent.
+    """
+    run_dir = Path(config["run_dir"])
+    if any((run_dir / f"{split}.jsonl").exists() for split in ("validation", "test")):
+        print("Existing question files were kept.")
+        return
+    path = download(config, "BeIR/scifact", "queries/queries-00000-of-00001.parquet", "beir_revision")
+    queries = {row["_id"]: row["text"] for row in parquet_rows(path)}
+    qrels = load_qrels(config, "test", "BeIR/scifact-qrels")
+    ids = sorted(query_id for query_id in qrels if query_id in queries and any(score > 0 for score in qrels[query_id].values()))
+    size = config["validation_size"] + config["test_size"]
+    if len(ids) < size:
+        print(f"Only {len(ids)} SciFact test claims; reduce validation_size and test_size.")
+        return
+    random.Random(config["seed"]).shuffle(ids)
+    chosen = {"validation": ids[:config["validation_size"]], "test": ids[config["validation_size"]:size]}
+    for split, selected in chosen.items():
+        write_jsonl(run_dir / f"{split}.jsonl", [
+            {"id": query_id, "question": queries[query_id], "qrels": qrels[query_id], "beir_split": "test"}
+            for query_id in selected
+        ])
+        print(f"{split}: {len(selected)} disjoint SciFact test claims")
+    write_json(run_dir / "sample_counts.json", {split: {"claim": len(selected)} for split, selected in chosen.items()})
+    write_json(run_dir / "sampling.json", {"dataset": "scifact", "seed": config["seed"],
+                                         "validation_size": config["validation_size"], "test_size": config["test_size"]})
+
+
 def prepare(config):
+    if config.get("dataset", "hotpotqa") == "scifact":
+        return prepare_scifact(config)
     if config.get("sample_source", "original") == "beir_test":
         return prepare_shared(config)
     run_dir = Path(config["run_dir"])

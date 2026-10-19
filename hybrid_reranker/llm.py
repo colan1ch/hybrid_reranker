@@ -204,7 +204,8 @@ class LLM:
         usage, error = sum_usage(), None
         for attempt in range(2):
             result = self.complete(
-                self.config["llm_reranker"], RERANK_SYSTEM + (RERANK_RETRY if attempt else ""), prompt,
+                self.config["llm_reranker"],
+                self.config.get("rerank_instruction", RERANK_SYSTEM) + (RERANK_RETRY if attempt else ""), prompt,
                 int(self.config["rerank_output_tokens"] * (1.5 if attempt else 1)), schema,
             )
             if result is None:
