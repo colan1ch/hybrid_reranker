@@ -195,6 +195,7 @@ def test_the_local_daily_guard_can_be_left_to_groq(config, groq, monkeypatch, sl
 
 
 def test_a_configured_instruction_replaces_the_default_but_the_default_is_unchanged(config, groq):
+    config.pop("rerank_instruction", None)
     client = groq(lambda request: (permutation(), "stop"))
     LLM(config).rerank("q?", documents())
     assert "multi-hop" in client.requests[0]["messages"][0]["content"]

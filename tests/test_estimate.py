@@ -3,6 +3,7 @@ from hybrid_reranker.io import write_jsonl
 
 
 def test_estimate_accounts_for_separate_daily_and_minute_limits(config, capsys):
+    config.update(validation_size=100, test_size=300)
     result = estimate(config, answer_tokens=1000)
     first, second = result["models"]
     assert first["calls"] == 400 and first["estimated_tokens"] == 960000 and first["quota_days"] == 5
