@@ -18,6 +18,7 @@ def offline(monkeypatch):
     monkeypatch.setattr(socket, "create_connection", deny)
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+    monkeypatch.setenv("GROQ_ENV_FILES", "")
 
 
 @pytest.fixture
