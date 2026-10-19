@@ -342,3 +342,9 @@ pyrightconfig.json
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,visualstudiocode,pydev,python,pycharm
+
+data/
+runs/
+
+*.env
+/*.tar.gz
