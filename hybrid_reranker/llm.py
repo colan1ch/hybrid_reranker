@@ -8,6 +8,7 @@ import groq
 import httpx
 import tiktoken
 from groq import Groq
+from dotenv import dotenv_values
 
 from .io import append_jsonl, read_jsonl
 
@@ -93,14 +94,31 @@ class LLM:
         self.cache = {row["key"]: row for row in self.records}
         # Limits belong to an API key. Records merged from another machine carry that key's short hash
         # (never the key itself), so they fill the cache but do not count against this key's quota.
-        self.account = hashlib.sha256(os.environ.get("GROQ_API_KEY", "").encode()).hexdigest()[:12]
+        paths = os.environ.get("GROQ_ENV_FILES")
+        self.key_files = []
+        if paths is None:
+            number = 1
+            while Path(f"{number}.env").is_file():
+                self.key_files.append(f"{number}.env")
+                number += 1
+        else:
+            self.key_files = [path for path in paths.split() if Path(path).is_file()]
+        self.api_keys = ([dotenv_values(path)["GROQ_API_KEY"] for path in self.key_files]
+                         if self.key_files else [os.environ.get("GROQ_API_KEY", "")])
         # Our own daily guard assumes a rolling 24 hours. RERANK_LOCAL_QUOTA=off lets Groq decide instead: when it
         # refuses (429 with a long retry-after) the run pauses just the same, and it resumes as soon as Groq allows.
         self.local_quota = os.environ.get("RERANK_LOCAL_QUOTA", "on").lower() != "off"
+        self.use_key(0)
+
+    def use_key(self, index):
+        self.key_index = index
+        self.account = hashlib.sha256(self.api_keys[index].encode()).hexdigest()[:12]
         self.next_call = max((row["timestamp"] + max(
-            60 / config["requests_per_minute"], row["reserved_tokens"] * 60 / config["tokens_per_minute"],
+            60 / self.config["requests_per_minute"], row["reserved_tokens"] * 60 / self.config["tokens_per_minute"],
         ) for row in self.own_records()), default=0)
         self.client = None
+        if self.key_files:
+            print(f"Groq credentials: {self.key_files[index]}")
 
     def own_records(self):
         return [row for row in self.records if row.get("account", self.account) == self.account]
@@ -122,18 +140,24 @@ class LLM:
             return self.cache[key]
         encoding = tiktoken.get_encoding("o200k_harmony")
         reserve = len(encoding.encode(system + prompt, disallowed_special=())) + max_tokens + 256
-        recent = [row for row in self.own_records() if row["model"] == model and row["timestamp"] > time.time() - 86400]
-        tokens = sum(row["usage"]["total_tokens"] for row in recent)
-        if self.local_quota and (len(recent) >= self.config["requests_per_day"]
-                                 or tokens + reserve > self.config["tokens_per_day"]):
-            print(f"Local quota reached for {model}: {len(recent)} requests, {tokens} tokens. Resume later.")
-            return None
-        time.sleep(max(0, self.next_call - time.time()))
-        if self.client is None:
-            self.client = Groq(max_retries=0, timeout=httpx.Timeout(120.0, connect=30.0))
-        started = time.time()
-        sent = self.send(request, reserve - max_tokens - 256)
-        if sent is None:
+        for _ in self.api_keys:
+            recent = [row for row in self.own_records() if row["model"] == model and row["timestamp"] > time.time() - 86400]
+            tokens = sum(row["usage"]["total_tokens"] for row in recent)
+            if self.local_quota and (len(recent) >= self.config["requests_per_day"]
+                                     or tokens + reserve > self.config["tokens_per_day"]):
+                print(f"Local quota reached for {model}: {len(recent)} requests, {tokens} tokens. Resume later.")
+            else:
+                time.sleep(max(0, self.next_call - time.time()))
+                if self.client is None:
+                    self.client = Groq(api_key=self.api_keys[self.key_index] or None, max_retries=0,
+                                       timeout=httpx.Timeout(120.0, connect=30.0))
+                started = time.time()
+                sent = self.send(request, reserve - max_tokens - 256)
+                if sent is not None:
+                    break
+            if len(self.api_keys) > 1:
+                self.use_key((self.key_index + 1) % len(self.api_keys))
+        else:
             return None
         row = {
             "key": key, "account": self.account, "model": model, "timestamp": time.time(),
@@ -167,17 +191,28 @@ class LLM:
                 return {"content": "", "finish_reason": f"error:{code}", "usage": usage, "estimated_usage": True}
             except groq.RateLimitError as error:
                 delay = retry_after(error)
+                if len(self.api_keys) > 1:
+                    print(f"Groq rate limit (retry after {delay} s); trying the next participant.")
+                    return None
                 if wait is None or delay is None or delay > LONGEST_RATE_LIMIT_WAIT:
                     print(f"Groq rate limit reached (retry after {delay} s). Resume later: run the same command again.")
                     return None
                 print(f"Groq rate limit; waiting {delay:.0f} s.")
                 time.sleep(delay + 1)
             except (groq.APITimeoutError, groq.APIConnectionError, groq.InternalServerError) as error:
+                if len(self.api_keys) > 1:
+                    print(f"{type(error).__name__}; trying the next participant.")
+                    return None
                 if wait is None:
                     print(f"Groq is unreachable ({type(error).__name__}). Resume later: run the same command again.")
                     return None
                 print(f"{type(error).__name__}; retrying in {wait} s.")
                 time.sleep(wait)
+            except (groq.AuthenticationError, groq.PermissionDeniedError) as error:
+                if len(self.api_keys) == 1:
+                    raise
+                print(f"{type(error).__name__}; trying the next participant.")
+                return None
             else:
                 return {"content": response.choices[0].message.content,
                         "finish_reason": response.choices[0].finish_reason, "usage": response.usage.model_dump()}
