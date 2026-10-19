@@ -345,3 +345,6 @@ pyrightconfig.json
 
 data/
 runs/
+
+*.env
+/*.tar.gz
