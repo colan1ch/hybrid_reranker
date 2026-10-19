@@ -58,3 +58,9 @@ def test_failure_flags_default_to_zero_for_results_saved_before_they_existed():
                   answer_usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
     metrics = query_metrics(query, result, answers=True)
     assert metrics["llm_failed"] == 1.0 and metrics["answer_failed"] == 1.0
+
+
+def test_support_recall_without_supporting_facts_is_the_share_of_relevant_documents_in_the_context():
+    query = {"qrels": {"d1": 1, "d2": 1, "d3": 0}}
+    result = {"ranking": ["d1", "d2"], "context": [{"id": "d1"}, {"id": "d3"}], "llm_called": False, "rerank_usage": {}}
+    assert query_metrics(query, result)["support_recall@5"] == 0.5

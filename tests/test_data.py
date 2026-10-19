@@ -101,3 +101,34 @@ def test_shared_source_never_overwrites_an_existing_split(monkeypatch, tmp_path,
     assert "existing question files were kept" in capsys.readouterr().out
     row = {"supporting_facts": {"title": ["Missing"], "sent_id": [0]}}
     assert data.usable_facts(row, {"A": ["one"]}) is None
+
+
+def install_scifact(monkeypatch, tmp_path, claims=6):
+    ids = [f"c{i}" for i in range(claims)]
+    files = {
+        ("BeIR/scifact", "queries/queries-00000-of-00001.parquet"): write_parquet(
+            tmp_path / "sf-queries.parquet", [{"_id": i, "text": f"claim {i}"} for i in [*ids, "unlabelled"]]),
+        ("BeIR/scifact-qrels", "test.tsv"): write_qrels(tmp_path / "sf-test.tsv", ids),
+    }
+    monkeypatch.setattr(data, "download", lambda config, repo, filename, revision: files[(repo, filename)])
+
+
+def test_scifact_samples_are_disjoint_reproducible_and_have_no_answers(monkeypatch, tmp_path, config, run_dir):
+    install_scifact(monkeypatch, tmp_path)
+    config.update(dataset="scifact", validation_size=2, test_size=3)
+    data.prepare(config)
+    validation, test = read_jsonl(run_dir / "validation.jsonl"), read_jsonl(run_dir / "test.jsonl")
+    assert (len(validation), len(test)) == (2, 3)
+    assert not {row["id"] for row in validation} & {row["id"] for row in test}
+    assert all("answer" not in row and "supporting_facts" not in row and row["qrels"] for row in validation + test)
+    assert all(row["question"].startswith("claim ") and row["beir_split"] == "test" for row in validation + test)
+    before = {path: path.read_bytes() for path in run_dir.glob("*.json*")}
+    data.prepare(config)  # existing files are never overwritten
+    assert all(path.read_bytes() == content for path, content in before.items())
+
+
+def test_scifact_refuses_a_sample_larger_than_the_data(monkeypatch, tmp_path, config, run_dir, capsys):
+    install_scifact(monkeypatch, tmp_path, claims=3)
+    config.update(dataset="scifact", validation_size=2, test_size=3)
+    data.prepare(config)
+    assert "Only 3 SciFact test claims" in capsys.readouterr().out and not (run_dir / "test.jsonl").exists()

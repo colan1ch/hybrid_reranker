@@ -192,3 +192,12 @@ def test_the_local_daily_guard_can_be_left_to_groq(config, groq, monkeypatch, sl
     assert LLM(config).rerank("q?", documents())[0] is not None and len(client.requests) == 1
     groq(script([http_error("429", 429, headers={"retry-after": "7200"})]))
     assert LLM(config).rerank("another?", documents()) is None  # Groq says no: pause, as before
+
+
+def test_a_configured_instruction_replaces_the_default_but_the_default_is_unchanged(config, groq):
+    client = groq(lambda request: (permutation(), "stop"))
+    LLM(config).rerank("q?", documents())
+    assert "multi-hop" in client.requests[0]["messages"][0]["content"]
+    config.update(rerank_instruction="Judge the claim.", data_dir=config["data_dir"] + "-other")
+    LLM(config).rerank("q?", documents())
+    assert client.requests[1]["messages"][0]["content"] == "Judge the claim."

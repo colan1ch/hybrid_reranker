@@ -25,7 +25,7 @@ def part(text):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Selective LLM reranking on BEIR HotpotQA")
+    parser = argparse.ArgumentParser(description="Selective LLM reranking on BEIR (HotpotQA, SciFact)")
     parser.add_argument("--config", default="config.toml")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ["prepare", "retrieve", "tune"]:
