@@ -79,3 +79,13 @@ def test_case_file_puts_decisions_that_lost_quality_first(config, run_dir, offli
     lost = [row for row in rows if row["gap_lost_quality"] == "True"]
     assert [row["id"] for row in lost] == [f"test-{index:03d}" for index in range(5, 10)]
     assert rows[:5] == lost and all(row["gap_called"] == "False" and row["llm_effect"] == "helped" for row in lost)
+
+
+def test_case_file_names_the_relevant_documents_and_their_ranks(config, run_dir, offline_run):
+    offline_run()
+    (run_dir / "thresholds.json").write_text(json.dumps({"gap": {"threshold": 0.5}}))
+    controls(config, repeats=10)
+    with (run_dir / "controls/test.cases.csv").open() as file:
+        rows = list(csv.DictReader(file))
+    assert {"gold_titles", "gold_rank_bert", "gold_rank_llm"} <= set(rows[0]) and "answer" not in rows[0]
+    assert all(row["gold_titles"] and row["gold_rank_bert"] and row["gold_rank_llm"] for row in rows)
