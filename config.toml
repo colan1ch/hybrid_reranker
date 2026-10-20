@@ -2,11 +2,12 @@ data_dir = "data"
 dataset = "scifact"
 run_dir = "runs/final"
 seed = 42
-# SciFact (BEIR): validation claims are drawn from BEIR train (threshold and gate), test is the 300 claims of BEIR test.
-# See `prepare` in data.py. Do not change anything that goes into the 120B request (rerank_*, reasoning_effort,
-# llm_reranker, candidate_count, retriever/reranker settings): cached answers are keyed by the exact request.
-validation_size = 200
-test_size = 300
+# SciFact (BEIR): validation and test are disjoint random subsets of the 300 labelled claims of BEIR test (see `prepare`
+# in data.py): 50 claims choose the threshold and train the gate, 250 are the test.
+# Do not change anything that goes into the 120B request (rerank_*, reasoning_effort, llm_reranker, candidate_count,
+# retriever/reranker settings): cached answers are keyed by the exact request.
+validation_size = 50
+test_size = 250
 
 beir_revision = "b3b5335604bf5ee3c4447671af975ea25143d4f5"
 qrels_revision = "2938d17dc3b09882fdb8c12bbbe2e2dc0e75a029"

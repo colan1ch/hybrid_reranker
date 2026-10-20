@@ -8,21 +8,19 @@ from .controls import BUDGETS, arrays, budget_masks, controls, data_kind, load_p
 from .evaluate import complete_results, write_csv
 from .gate import gate_scores
 from .io import load_results, write_json
-from .metrics import answer_metrics, ranking_metrics
+from .metrics import ranking_metrics
 
 LABELS = {"dense": "Dense", "bert": "BERT", "llm": "Always LLM", "gap": "Gap rule",
           "gate": "Logistic gate", "random": "Random", "oracle": "Oracle"}
-FIELDS = ("ndcg@10", "both_in_top5", "em", "f1", "llm_fraction", "rerank_tokens", "answer_tokens", "llm_failed", "answer_failed")
+FIELDS = ("ndcg@10", "all_relevant_in_top5", "llm_fraction", "rerank_tokens", "llm_failed")
 
 
 def measurements(query, result):
     relevant = {doc_id for doc_id, score in query["qrels"].items() if score > 0}
-    answer = answer_metrics(result["answer"], query["answer"]) if "answer" in result else {"em": np.nan, "f1": np.nan}
     return [ranking_metrics(result["ranking"], query["qrels"])["ndcg@10"],
-            float(bool(relevant) and relevant <= set(result["ranking"][:5])), answer["em"], answer["f1"],
+            float(bool(relevant) and relevant <= set(result["ranking"][:5])),
             float(result["llm_called"]), result["rerank_usage"].get("total_tokens", 0),
-            result.get("answer_usage", {}).get("total_tokens", np.nan), float(result.get("llm_failed", False)),
-            float(result.get("answer_failed", False)) if "answer" in result else np.nan]
+            float(result.get("llm_failed", False))]
 
 
 def format_number(value):
@@ -226,7 +224,7 @@ def report(config, split="test", repeats=1000, mock=False):
     marker = "MOCK. " if kind == "MOCK" else ""
     latex_table(output / "table_1.tex", marker + "Saved ranking results; intervals: paired query bootstrap, 95%. Gap and gate use their own "
                 "frozen thresholds, so their call fractions differ; Table 2 compares them at equal budgets.",
-                ["Method", "nDCG@10 [95%]", "Delta vs LLM [95%]", "Both@5", "EM", "F1", "Call frac.", "120B tok/q", "20B tok/q", "120B fail", "20B fail"], [
+                ["Method", "nDCG@10 [95%]", "Delta vs LLM [95%]", "All rel. in top 5", "Call frac.", "120B tok/q", "120B fail"], [
                     [LABELS[row["method"]], f"{row['ndcg@10']:.3f} [{row['ndcg_ci95_low']:.3f}, {row['ndcg_ci95_high']:.3f}]",
                      f"{row['difference_vs_llm']:.3f} [{row['difference_ci95_low']:.3f}, {row['difference_ci95_high']:.3f}]",
                      *[format_number(row[key]) for key in FIELDS[1:]]] for row in table])
@@ -236,8 +234,7 @@ def report(config, split="test", repeats=1000, mock=False):
     write_json(output / "report.json", {
         "data_kind": kind, "split": split, "gate_min_gain": gate_model["min_gain"] if gate_model else None, "table_1": table, "table_2": diagnostics,
         "live_cascade_gap_mismatches": live, "success_criteria": criteria,
-        "notes": ["Missing saved answers are left blank, never generated or estimated.",
-                  ("Gap and gate rows are rebuilt from saved bert/llm results; live_cascade_gap_mismatches counts "
+        "notes": [("Gap and gate rows are rebuilt from saved bert/llm results; live_cascade_gap_mismatches counts "
                    "queries where a saved cascade_gap run ranked differently (null when there is no such run)."),
                   "Random uses the empirical inclusion weights of the fixed-seed draws at the frozen gap budget.",
                   "Oracle uses exactly the same number of calls as the frozen gap rule.",

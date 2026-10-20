@@ -36,13 +36,13 @@ cp .env.example .env
 
 ## Данные
 
-`rerank prepare` фиксирует выборки с seed 42:
+`rerank prepare` фиксирует выборки с seed 42. Оба набора берутся из 300 размеченных утверждений BEIR `test` и не пересекаются:
 
-- **validation** — 200 утверждений из BEIR `train` (809 с размеченными текстами). Только для выбора порога и обучения gate;
-- **test** — все 300 утверждений BEIR `test`.
+- **validation** — 50 утверждений: выбор порога и обучение gate;
+- **test** — остальные 250 утверждений.
 
-Выборки не пересекаются: это разные сплиты BEIR. Первые N проверочных утверждений не зависят от `validation_size`, так что выборку можно сокращать и наращивать.
-В `test.jsonl` сначала идут 100 утверждений, ответов 120B на которые ещё нет в кэше, потом 200 с готовыми ответами. Поэтому `--part 1/2` и `--part 2/2` делят между двумя людьми новые запросы поровну (по 50), а готовые из кэша бесплатны обоим.
+Утверждения перемешиваются с зафиксированным seed; первые `validation_size` идут в проверку, следующие `test_size` в тест. Проверка и тест из одного распределения, меньшая проверочная выборка является началом большей.
+Проверочный набор нельзя взять из BEIR `train`: модели `bge` могли видеть эти утверждения при обучении (на проверочных из `train` дешёвые модели чуть сильнее, чем на `test`), и подбор порога на них получается слишком осторожным.
 
 Корпус (5183 абстракта) и qrels берутся из [BEIR](https://huggingface.co/datasets/BeIR/scifact). `retrieve` кодирует корпус целиком и сохраняет top-20 один раз для обоих splits; на процессоре это порядка получаса. Все режимы читают этот файл. Если `candidates.jsonl` посчитан на другой машине, пользоваться нужно им: на CPU и GPU эмбеддинги чуть различаются, а общий `candidates.jsonl` нужен, чтобы запросы к 120B совпадали с кэшем.
 
@@ -57,11 +57,11 @@ rerank run --split validation --method bert
 rerank run --split test --method dense
 rerank run --split test --method bert
 
-rerank run --split validation --method llm --allow-api   # 200 запросов
+rerank run --split validation --method llm --allow-api   # 50 запросов
 rerank tune
 rerank gate
 
-rerank run --split test --method llm --allow-api         # 300 запросов, 200 из кэша
+rerank run --split test --method llm --allow-api         # 250 запросов
 rerank run --split test --method all --allow-api         # каскады берут ответы из кэша
 rerank evaluate --split test --method all
 ```
@@ -160,7 +160,7 @@ rerank merge --from путь/к/второй/run_dir --api путь/ко/вто�
 ```bash
 rerank gate
 rerank controls --split test --repeats 1000
-rerank resplit --repeats 100 --calibration-size 200
+rerank resplit --repeats 100 --calibration-size 50
 rerank run --split test --method cascade_gate
 rerank evaluate --split test --method cascade_gate
 rerank report --split test
