@@ -48,7 +48,11 @@ def figure_2(summary, output, kind, split):
 
     styles = {"gap": ("-", "o"), "gate": ("--", "s"), "random": (":", "^"), "oracle": ("-.", "D")}
     with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10}):
-        fig, ax = plt.subplots(figsize=(7.1, 3.8), layout="constrained")
+        panels = bool(summary.get("gaps")) and len(summary["gaps"]) == len(summary.get("gains", ()))
+        if panels:
+            fig, (ax, bx) = plt.subplots(1, 2, figsize=(7.1, 3.5), layout="constrained", gridspec_kw={"width_ratios": [2.1, 1]})
+        else:
+            fig, ax = plt.subplots(figsize=(7.1, 3.8), layout="constrained")
         for method, (style, marker) in styles.items():
             rows = [row for row in summary["plot_curves"] if row["method"] == method]
             if rows:
@@ -73,7 +77,26 @@ def figure_2(summary, output, kind, split):
         ax.grid(axis="y", color="0.9", linewidth=0.6)
         ax.spines[["top", "right"]].set_visible(False)
         ax.margins(y=.15)
-        ax.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=3, frameon=False, fontsize=8)
+        ax.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=3 if not panels else 2, frameon=False, fontsize=7.5)
+        if panels:
+            gaps, gains = np.asarray(summary["gaps"]), np.asarray(summary["gains"])
+            top = 8.0  # gaps of 8 or more share the last bin
+            edges = np.linspace(0, top, 13)
+            groups = (("helped", gains > 0, "-", "0.1"), ("unchanged", gains == 0, "--", "0.45"), ("harmed", gains < 0, ":", "0.1"))
+            for name, mask, style, color in groups:
+                if mask.any():
+                    weights = np.full(int(mask.sum()), 1 / mask.sum())
+                    bx.hist(np.clip(gaps[mask], 0, top - 1e-9), bins=edges, weights=weights, histtype="step", linestyle=style,
+                            color=color, linewidth=1.5, label=f"LLM {name} (n={int(mask.sum())})")
+            bx.axvline(summary["threshold"], color="0.5", linewidth=1, linestyle="-.")
+            bx.annotate("threshold", (summary["threshold"], bx.get_ylim()[1]), xytext=(3, -9), textcoords="offset points", fontsize=7.5, color="0.35")
+            bx.set(xlim=(0, top), xlabel="BERT score gap", ylabel="Share of queries in the group")
+            bx.set_xticks([0, 2, 4, 6, 8])
+            bx.grid(axis="y", color="0.9", linewidth=0.6)
+            bx.spines[["top", "right"]].set_visible(False)
+            bx.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=1, frameon=False, fontsize=7.5)
+            ax.set_title("(a)", loc="left", fontsize=9, pad=40)
+            bx.set_title("(b)", loc="left", fontsize=9, pad=40)
         fig.suptitle(f"{'МАКЕТ / MOCK — ' if kind == 'MOCK' else ''}{split}, n={summary['queries']}")
         for extension in ("png", "pdf"):
             fig.savefig(output / f"figure_2.{extension}", dpi=220)

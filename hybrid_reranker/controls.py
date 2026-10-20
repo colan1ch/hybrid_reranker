@@ -198,6 +198,7 @@ def controls(config, split="test", repeats=1000, mock=False):
         "data_kind": kind, "split": split, "queries": len(rows), "seed": config["seed"], "random_repeats": repeats,
         "bert_ndcg": float(bert.mean()), "llm_ndcg": float(llm.mean()), "auc_gap": auc(gains > 0, -gaps),
         "gate_available": "gate" in scores, "threshold": threshold, "llm_fraction": count / len(rows),
+        "gaps": gaps.tolist(), "gains": gains.tolist(),
         "rule_ndcg": quality, "random_ndcg": random["ndcg@10"], "oracle_ndcg": oracle_quality,
         "random_inclusion": random["inclusion"],
         "retained_gain": (quality - bert.mean()) / improvement if improvement else None,
