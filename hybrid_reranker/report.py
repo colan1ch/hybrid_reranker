@@ -51,80 +51,100 @@ TEXT = {
         "threshold": "threshold", "title": "{split}, n={n}",
     },
     "ru": {
-        "labels": {"dense": "Только поиск", "bert": "BERT", "llm": "Всегда LLM", "gap": "Правило по разрыву",
-                   "gate": "Мини-модель", "random": "Монетка", "oracle": "Оракул"},
-        "random_suffix": " (ожидание)", "frozen": "{}, порог",
-        "bert": "BERT", "always": "Всегда LLM", "x": "Доля утверждений, переданных LLM",
-        "y": "Прирост nDCG@10 к BERT", "panels": ("а)", "б)"), "helped": "LLM помогла",
-        "unchanged": "LLM не изменила", "harmed": "LLM навредила", "gap_x": "Разрыв оценок BERT",
-        "gap_y": "Доля утверждений в группе", "threshold": "порог", "title": None,
+        "labels": {"dense": "Только поиск", "bert": "Кросс-энкодер", "llm": "Все запросы", "gap": "Правило",
+                   "gate": "Мини-модель", "random": "Случайный выбор", "oracle": "Оракул"},
+        "random_suffix": "", "frozen": "{}, порог",
+        "bert": "Кросс-энкодер", "always": "Все запросы", "x": "Доля обращений к большой модели",
+        "y": "Прирост nDCG@10", "panels": ("а)", "б)"), "helped": "Модель помогла",
+        "unchanged": "Без изменений", "harmed": "Модель навредила", "gap_x": "Разрыв оценок",
+        "gap_y": "Доля в группе", "threshold": "порог", "title": None,
     },
 }
 
 
-def figure_2(summary, output, kind, split, lang="en", name="figure_2"):
+SERIES = {  # colour is a second cue: every series also has its own line style and marker, so a grey print still reads
+    "gap": ("#2a78d6", "-", "o"), "gate": ("#eb6834", "--", "s"), "random": ("#6b6b6b", ":", "^"), "oracle": ("#333333", "-.", "D")}
+OUTCOMES = (("helped", "#1a7f5a", "-"), ("unchanged", "#8a8a8a", "--"), ("harmed", "#d1495b", ":"))
+
+
+def figure_2(summary, output, kind, split, lang="en", name="figure_2", compact=False):
+    """Figure 2: budget curves (a) and the gap histogram by outcome (b); `compact` draws it at the printed size (1:1 fonts)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.ticker import PercentFormatter
 
     text = TEXT[lang]
-    styles = {"gap": ("-", "o"), "gate": ("--", "s"), "random": (":", "^"), "oracle": ("-.", "D")}
-    with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10}):
+    base, small, line, mark = (8.5, 7.2, 1.6, 4.2) if compact else (10.0, 7.5, 1.8, 5.5)
+    face = "white"
+    with plt.rc_context({"font.family": ["Times New Roman", "DejaVu Serif"] if compact else "DejaVu Sans", "font.size": base,
+                         "axes.edgecolor": "0.35", "axes.linewidth": 0.7, "xtick.color": "0.2", "ytick.color": "0.2"}):
         panels = bool(summary.get("gaps")) and len(summary["gaps"]) == len(summary.get("gains", ()))
         if panels:
-            fig, (ax, bx) = plt.subplots(1, 2, figsize=(7.1, 3.5), layout="constrained", gridspec_kw={"width_ratios": [2.1, 1]})
+            size = (4.7, 2.75) if compact else (7.1, 3.5)
+            fig, (ax, bx) = plt.subplots(1, 2, figsize=size, layout="constrained", gridspec_kw={"width_ratios": [2.15, 1]})
         else:
             fig, ax = plt.subplots(figsize=(7.1, 3.8), layout="constrained")
-        for method, (style, marker) in styles.items():
-            rows = [row for row in summary["plot_curves"] if row["method"] == method]
+        full_gain = summary["llm_ndcg"] - summary["bert_ndcg"]
+        curves = {m: [row for row in summary["plot_curves"] if row["method"] == m] for m in SERIES}
+        if curves["gap"]:
+            xs = np.array([row["llm_fraction"] for row in curves["gap"]])
+            ys = np.array([row["gain_over_bert"] for row in curves["gap"]])
+            ax.fill_between(xs, ys, xs * full_gain, where=ys > xs * full_gain, color=SERIES["gap"][0], alpha=0.13, linewidth=0, zorder=1)
+        for method, (color, style, marker) in SERIES.items():
+            rows = curves[method]
             if rows:
                 marks = [index for index, row in enumerate(rows)
                          if any(abs(row["llm_fraction"] - budget) < 1e-9 for budget in BUDGETS)]
                 ax.plot([row["llm_fraction"] for row in rows], [row["gain_over_bert"] for row in rows],
-                        color="0.15", linestyle=style, marker=marker, markevery=marks, markerfacecolor="white",
-                        linewidth=1.4, markersize=5, label=text["labels"][method] + (text["random_suffix"] if method == "random" else ""))
-        ax.axhline(0, color="0.65", linewidth=0.7)
-        points = [("gap", summary["llm_fraction"], summary["rule_ndcg"], "o")]
+                        color=color, linestyle=style, marker=marker, markevery=marks, markerfacecolor=face,
+                        markeredgewidth=1.1, linewidth=line, markersize=mark, zorder=3,
+                        label=text["labels"][method] + (text["random_suffix"] if method == "random" else ""))
+        ax.axhline(0, color="0.7", linewidth=0.7, zorder=0)
+        points = [("gap", summary["llm_fraction"], summary["rule_ndcg"])]
         if summary.get("gate_ndcg") is not None:
-            points.append(("gate", summary["gate_fraction"], summary["gate_ndcg"], "s"))
-        for method, fraction, quality, marker in points:
-            ax.scatter([fraction], [quality - summary["bert_ndcg"]], marker=marker, color="black", s=45, zorder=6,
-                       label=text["frozen"].format(text["labels"][method]))
-        full_gain = summary["llm_ndcg"] - summary["bert_ndcg"]
-        ax.scatter([0, 1], [0, full_gain], marker="*", color="black", s=85, zorder=5)
-        ax.annotate(text["bert"], (0, 0), xytext=(6, -14), textcoords="offset points", fontsize=9)
-        ax.annotate(text["always"], (1, full_gain), xytext=(-6, 16), textcoords="offset points", ha="right", fontsize=9)
+            points.append(("gate", summary["gate_fraction"], summary["gate_ndcg"]))
+        for method, fraction, quality in points:
+            color, _, marker = SERIES[method]
+            ax.scatter([fraction], [quality - summary["bert_ndcg"]], marker=marker, color=color, edgecolor="white", linewidth=0.8,
+                       s=(34 if compact else 50), zorder=6, label=text["frozen"].format(text["labels"][method]))
+        ax.scatter([0, 1], [0, full_gain], marker="*", color="black", s=(60 if compact else 90), zorder=5)
+        ax.annotate(text["bert"], (0, 0), xytext=(6, -13), textcoords="offset points", fontsize=small + 0.5, color="0.15")
+        ax.annotate(text["always"], (1, full_gain), xytext=(-6, 14), textcoords="offset points", ha="right", fontsize=small + 0.5, color="0.15")
         ax.set(xlim=(-.03, 1.03), xlabel=text["x"], ylabel=text["y"])
         ax.xaxis.set_major_formatter(PercentFormatter(1))
-        ax.grid(axis="y", color="0.9", linewidth=0.6)
+        ax.grid(axis="y", color="0.92", linewidth=0.6, zorder=0)
+        ax.set_axisbelow(True)
         ax.spines[["top", "right"]].set_visible(False)
         ax.margins(y=.15)
-        ax.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=3 if not panels else 2, frameon=False, fontsize=7.5)
+        ax.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=2 if panels else 3, frameon=False, fontsize=small,
+                  handlelength=2.2, columnspacing=1.0, labelspacing=0.3)
         if panels:
             gaps, gains = np.asarray(summary["gaps"]), np.asarray(summary["gains"])
             top = 8.0  # gaps of 8 or more share the last bin
             edges = np.linspace(0, top, 13)
-            groups = (("helped", gains > 0, "-", "0.1"), ("unchanged", gains == 0, "--", "0.45"), ("harmed", gains < 0, ":", "0.1"))
-            for name_, mask, style, color in groups:
+            masks = {"helped": gains > 0, "unchanged": gains == 0, "harmed": gains < 0}
+            for name_, color, style in OUTCOMES:
+                mask = masks[name_]
                 if mask.any():
                     weights = np.full(int(mask.sum()), 1 / mask.sum())
                     bx.hist(np.clip(gaps[mask], 0, top - 1e-9), bins=edges, weights=weights, histtype="step", linestyle=style,
-                            color=color, linewidth=1.5, label=f"{text[name_]} (n={int(mask.sum())})")
-            bx.axvline(summary["threshold"], color="0.5", linewidth=1, linestyle="-.")
-            bx.annotate(text["threshold"], (summary["threshold"], bx.get_ylim()[1]), xytext=(3, -9), textcoords="offset points", fontsize=7.5, color="0.35")
+                            color=color, linewidth=line, label=f"{text[name_]} (n={int(mask.sum())})")
+            bx.axvline(summary["threshold"], color="0.45", linewidth=1, linestyle="-.")
+            bx.annotate(text["threshold"], (summary["threshold"], bx.get_ylim()[1]), xytext=(3, -9), textcoords="offset points", fontsize=small, color="0.3")
             bx.set(xlim=(0, top), xlabel=text["gap_x"], ylabel=text["gap_y"])
             bx.set_xticks([0, 2, 4, 6, 8])
-            bx.grid(axis="y", color="0.9", linewidth=0.6)
+            bx.grid(axis="y", color="0.92", linewidth=0.6)
+            bx.set_axisbelow(True)
             bx.spines[["top", "right"]].set_visible(False)
-            bx.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=1, frameon=False, fontsize=7.5)
-            ax.set_title(text["panels"][0], loc="left", fontsize=9, pad=40)
-            bx.set_title(text["panels"][1], loc="left", fontsize=9, pad=40)
+            bx.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=1, frameon=False, fontsize=small, handlelength=2.2, labelspacing=0.3)
+            ax.text(0.01, 0.97, text["panels"][0], transform=ax.transAxes, fontsize=base + 1, fontweight="bold", va="top")
+            bx.text(0.97, 0.97, text["panels"][1], transform=bx.transAxes, fontsize=base + 1, fontweight="bold", va="top", ha="right")
         title = text["title"]
         if title or kind == "MOCK":
             fig.suptitle(f"{'МАКЕТ / MOCK — ' if kind == 'MOCK' else ''}{title.format(split=split, n=summary['queries']) if title else ''}")
         for extension in ("png", "pdf"):
-            fig.savefig(output / f"{name}.{extension}", dpi=220)
+            fig.savefig(output / f"{name}.{extension}", dpi=(400 if compact else 220))
         plt.close(fig)
 
 
@@ -166,16 +186,16 @@ def ru_text(value):
     return re.sub(r"-(?=\d)", "−", str(value).replace(", ", "; ")).replace(".", ",")
 
 
-RU_METHODS = {"dense": "Только поиск (dense)", "bert": "Только BERT", "llm": "Всегда LLM (120B)",
+RU_METHODS = {"dense": "Только поиск", "bert": "Только кросс-энкодер", "llm": "Обращение ко всем запросам",
               "gap": "Каскад: правило по разрыву", "gate": "Каскад: мини-модель"}
-RU_DECISIONS = {"called / helped": "Позвали, 120B помогла", "called / unchanged": "Позвали, 120B не изменила",
-                "called / harmed": "Позвали, 120B навредила", "skipped / helped": "Не позвали, 120B помогла бы",
-                "skipped / unchanged": "Не позвали, 120B не изменила бы", "skipped / harmed": "Не позвали, 120B навредила бы"}
+RU_DECISIONS = {"called / helped": "Позвали, модель помогла", "called / unchanged": "Позвали, без изменений",
+                "called / harmed": "Позвали, модель навредила", "skipped / helped": "Не позвали, модель помогла бы",
+                "skipped / unchanged": "Не позвали, без изменений", "skipped / harmed": "Не позвали, модель навредила бы"}
 RU_STABILITY = {"threshold": "Порог разрыва: медиана [5%; 95%]", "calibration_fraction": "Доля вызовов на калибровочной части",
-                "check_fraction": "Доля вызовов на проверочной части", "difference_vs_llm": "Отставание от «всегда LLM»"}
-RU_CRITERIA = {"loss": "Потеря nDCG@10 к «всегда LLM» не больше допуска: разность [95% ДИ]",
-               "calls": "Доля вызовов 120B меньше 0,5",
-               "random": "Выигрыш у монетки при той же доле вызовов: разность [95% ДИ]"}
+                "check_fraction": "Доля вызовов на проверочной части", "difference_vs_llm": "Разность с обращением ко всем запросам"}
+RU_CRITERIA = {"loss": "Потеря nDCG@10 относительно обращения ко всем запросам не больше допуска: разность [интервал 95 %]",
+               "calls": "Доля обращений меньше 0,5",
+               "random": "Выигрыш над случайным выбором при той же доле обращений: разность [интервал 95 %]"}
 
 
 def write_ru_csv(path, header, rows):
@@ -193,6 +213,7 @@ def paper_outputs(directory, table, diagnostics, criteria, summary, kind, split)
     """
     directory.mkdir(parents=True, exist_ok=True)
     figure_2(summary, directory, kind, split, lang="ru")
+    figure_2(summary, directory, kind, split, lang="ru", name="figure_2_paper", compact=True)
     by_method = {row["method"]: row for row in table}
     rows = []
     for method in RU_METHODS:
@@ -207,8 +228,8 @@ def paper_outputs(directory, table, diagnostics, criteria, summary, kind, split)
             versus_random = f"{ru_number(random['value'], sign=True)} {ru_interval(random['ci95_low'], random['ci95_high'])}"
         rows.append([RU_METHODS[method], ru_number(100 * row["llm_fraction"], 1), f"{row['rerank_tokens']:.0f}", versus_llm, versus_random])
     write_ru_csv(directory / "table_1.csv", [
-        "Метод", "Доля вызовов 120B, %", "Токенов на утверждение", "Разность nDCG@10 с «всегда LLM» [95% ДИ]",
-        "Разность nDCG@10 с монеткой при той же доле вызовов [95% ДИ]"], rows)
+        "Метод", "Доля обращений, %", "Токенов на утверждение", "Разность nDCG@10 с обращением ко всем запросам [интервал 95 %]",
+        "Разность nDCG@10 со случайным выбором при той же доле обращений [интервал 95 %]"], rows)
     rows = []
     for row in diagnostics:
         block, item, gap, gate = row["block"], row["item"], row["gap"], row["gate"]
@@ -218,8 +239,8 @@ def paper_outputs(directory, table, diagnostics, criteria, summary, kind, split)
             name = item.split(":")[0]
             rows.append(["Устойчивость", RU_STABILITY.get(name, item), ru_text(gap) if gap is not None else None, None])
         elif block == "signal":
-            label = ("AUC: польза 120B (разность больше 0)" if item.startswith("AUC") else
-                     "Доля утверждений, где 120B помогла" if item.startswith("Positive") else
+            label = ("AUC (площадь под ROC-кривой): польза большой модели" if item.startswith("AUC") else
+                     "Доля утверждений, где большая модель помогла" if item.startswith("Positive") else
                      "AUC мини-модели на отложенных частях проверки")
             rows.append(["Сигнал", label, *(ru_number(v) if v is not None else "—" for v in (gap, gate))])
     for key in ("loss", "calls", "random"):

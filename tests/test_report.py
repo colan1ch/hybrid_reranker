@@ -143,11 +143,11 @@ def test_report_writes_russian_paper_files_without_repeating_the_figure(config, 
     with (paper / "table_1.csv").open(encoding="utf-8-sig") as file:
         rows = list(csv.reader(file, delimiter=";"))
     names = [row[0] for row in rows[1:]]
-    assert len(rows[0]) == 5 and "Монетка" not in " ".join(names) and "Оракул" not in " ".join(names)
-    assert names == ["Только поиск (dense)", "Только BERT", "Всегда LLM (120B)", "Каскад: правило по разрыву", "Каскад: мини-модель"]
+    assert len(rows[0]) == 5 and "Случайный" not in " ".join(names) and "Оракул" not in " ".join(names)
+    assert names == ["Только поиск", "Только кросс-энкодер", "Обращение ко всем запросам", "Каскад: правило по разрыву", "Каскад: мини-модель"]
     gap = next(row for row in rows if row[0].startswith("Каскад: правило"))
     assert gap[1] == "20,0" and "," in gap[3] and "." not in gap[3] and gap[3].startswith("+0,200")
-    llm = next(row for row in rows if row[0].startswith("Всегда"))
+    llm = next(row for row in rows if row[0].startswith("Обращение"))
     assert llm[3] == "—" and llm[4] == "—"
     with (paper / "table_2.csv").open(encoding="utf-8-sig") as file:
         rows = list(csv.reader(file, delimiter=";"))
