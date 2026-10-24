@@ -62,7 +62,7 @@ def test_report_leaves_missing_answers_blank(config, run_dir, offline_run):
         write_jsonl(path, rows.values())
     report(config, repeats=10)
     result = json.loads((run_dir / "report/test/report.json").read_text())
-    assert all(row["em"] is None and row["f1"] is None and row["answer_tokens"] is None for row in result["table_1"])
+    assert all(not {"em", "f1", "answer_tokens", "answer_failed"} & set(row) for row in result["table_1"])
 
 
 def test_report_requires_dense_results(config, run_dir, offline_run, capsys):
@@ -84,16 +84,16 @@ def test_report_without_a_trained_gate_leaves_gate_rows_out(config, run_dir, off
     assert (run_dir / "report/test/figure_2.pdf").exists()
 
 
-def test_report_retains_generator_failure_counts(config, run_dir, offline_run):
+def test_report_retains_reranker_failure_counts(config, run_dir, offline_run):
     prepare_report(config, run_dir, offline_run)
     path = run_dir / "test.llm.jsonl"
     rows = load_results(path)
-    next(iter(rows.values()))["answer_failed"] = True
+    next(iter(rows.values()))["llm_failed"] = True
     write_jsonl(path, rows.values())
     report(config, repeats=10)
     saved = json.loads((run_dir / "report/test/report.json").read_text())
     llm = next(row for row in saved["table_1"] if row["method"] == "llm")
-    assert llm["answer_failed"] == .02 and llm["llm_failed"] == 0
+    assert llm["llm_failed"] == .02 and "answer_failed" not in llm
     assert saved["gate_min_gain"] == 0
 
 
