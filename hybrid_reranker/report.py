@@ -94,7 +94,7 @@ def figure_2(summary, output, kind, split, lang="en", name="figure_2"):
         full_gain = summary["llm_ndcg"] - summary["bert_ndcg"]
         ax.scatter([0, 1], [0, full_gain], marker="*", color="black", s=85, zorder=5)
         ax.annotate(text["bert"], (0, 0), xytext=(6, -14), textcoords="offset points", fontsize=9)
-        ax.annotate(text["always"], (1, full_gain), xytext=(-8, 8), textcoords="offset points", ha="right", fontsize=9)
+        ax.annotate(text["always"], (1, full_gain), xytext=(-6, 16), textcoords="offset points", ha="right", fontsize=9)
         ax.set(xlim=(-.03, 1.03), xlabel=text["x"], ylabel=text["y"])
         ax.xaxis.set_major_formatter(PercentFormatter(1))
         ax.grid(axis="y", color="0.9", linewidth=0.6)
