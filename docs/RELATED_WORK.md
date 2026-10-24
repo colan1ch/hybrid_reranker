@@ -64,7 +64,25 @@
 - **Основа:** RankGPT (Sun и др., EMNLP 2023).
 - **Ближайшие работы:** Bacellar (arXiv 2609.22880, **препринт**, так и писать); ARDS (Gonzalez-Gamella и др., ICEIS 2026); Genc, Korukluoglu, Allan (ICTIR 2026); Dabod, Cohen, Stanovsky (arXiv 2606.31087); FrugalGPT (Chen, Zaharia, Zou, 2023); по желанию AcuRank (NeurIPS 2025), BalanceRAG (arXiv 2605.20084), Ni и др. (arXiv 2606.03535), CoRank (arXiv 2505.13757).
 - **Классика (только после проверки):** каскадное ранжирование (Wang, Lin, Metzler, SIGIR 2011), предсказание качества запроса (Cronen-Townsend и др., 2002). Известны по ссылкам в Genc и ARDS, сами не читались.
-- Слепое рецензирование: в тексте статьи не давать ссылки на репозиторий с именами авторов.
+- В требованиях РИНЦ слепого рецензирования нет; активные гиперссылки в тексте не допускаются (адрес можно писать обычным текстом).
 
 ---
 
+## Источники из публикаций МГТУ (обязательны, список «Публикации МГТУ 2025–2027»)
+
+Выбраны по аннотациям (Crossref, OpenAlex, страница издателя). Номера условные: в статье порядок определяется первым упоминанием, в одной скобке не больше трёх источников. Формат по требованиям РИНЦ: язык оригинала, для английских DOI.
+
+- [1] Malashin I.P., Masich I.S., Tynchenko V.S., Borodulin A.S., Gantimurov A.P., Nelyub V.A., Martysyuk D.A. SciGraph-LLM: Automatic Knowledge Graph Construction from Scientific Papers. Proceedings of the 19th ACM International Conference on Web Search and Data Mining (WSDM 2026 Companion), 2026, pp. 48–57. https://doi.org/10.1145/3779211.3793169
+  Что подтверждает аннотация: LLM извлекает из научных статей утверждения и привязанные к тексту доказательства (точность доказательств 81,3%). Ссылаться как на работу о том, что LLM применяют к утверждениям и доказательствам в научных текстах.
+- [2] Malashin I., Martysyuk D., Tynchenko V., Gantimurov A., Nelyub V., Borodulin A. Soft-Prompted Semantic Normalization for Unsupervised Analysis of the Scientific Literature. Machine Learning and Knowledge Extraction, 2026, vol. 8, no. 3, art. 63. https://doi.org/10.3390/make8030063
+  Что подтверждает аннотация: LLM и векторные представления аннотаций научных статей (ICML, ACL 2025), кластеризация тем. Ссылаться как на работу об анализе научной литературы с помощью LLM.
+- [3] Kolomichyk I.V., Dzitiev V.V., Kanev A.I. Information Retrieval System Based on the Knowledge Extraction. International Youth Conference on Radio Electronics, Electrical and Power Engineering (REEPE), 2025. https://doi.org/10.1109/REEPE63962.2025.10971026
+  Что подтверждает аннотация: поиск наиболее релевантных документов по сложному запросу с помощью семантического графа знаний. Ссылаться как на работу о поиске документов.
+- [4] Lovtsov V.A., Skvortsova M.A. Automated Mobile Operator Customer Service Using Large Language Models Combined with RAG System. International Youth Conference on Radio Electronics, Electrical and Power Engineering (REEPE), 2025. https://doi.org/10.1109/REEPE63962.2025.10971107
+  Что подтверждает аннотация: ассистент на основе LLM и системы RAG, сравнение нескольких открытых LLM. Ссылаться как на пример ИИ-помощника с поиском.
+- [5] Tronov K.A., Mazin A.V., Gagarin Y.E. Modern Retrieval-Augmented Generation Methods and Their Application in Engineering. In: Morozov A.N., Bunkin N.F., Gladyshev V.O., Fufurin I.L. (eds) Proceedings of the 13th All-Russian Conference on Irreversible Processes in Nature and Technology, vol. 1. Springer Proceedings in Physics, vol. 365. Springer, Cham, 2026, pp. 326–334. https://doi.org/10.1007/978-3-032-30639-5_30
+  Что подтверждает аннотация: систематический обзор RAG за январь 2024 – сентябрь 2025 (просмотрено больше 50 работ, разобрано 9); ограничения LLM (галлюцинации, статичные данные) снимаются подключением поиска; вычислительные затраты названы одним из значений таких систем. Ссылаться только в этом объёме.
+
+Запасные: Alt Linux LLM-assistant (https://doi.org/10.1007/978-3-032-07690-8_27), AI-based Assistant for Studying an Electrical Engineering Course (https://doi.org/10.1109/ICIICE69672.2026.11565119), Automating Information Retrieval with Semantic Data Processing (https://doi.org/10.1109/REEPE63962.2025.10971021); у них аннотации не проверены.
+
+Перед вставкой в статью каждый источник прочитать по аннотации самим; описывать в тексте только то, что в нём есть («В [1] предложен конвейер извлечения…»).
