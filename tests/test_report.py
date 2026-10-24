@@ -27,12 +27,10 @@ def test_report_exports_marked_mock_figure_and_both_tables(config, run_dir, offl
     output = run_dir / "report/test"
     saved = json.loads((output / "report.json").read_text())
     assert saved["data_kind"] == "MOCK" and len(saved["table_1"]) == 7
-    assert {row["block"] for row in saved["table_2"]} == {"decisions", "stability", "signal", "equal budget", "criterion"}
+    assert {row["block"] for row in saved["table_2"]} == {"decisions", "stability", "signal", "criterion"}
     gap = saved["success_criteria"]["gap"]
     assert gap["loss"]["value"] == pytest.approx(.2) and gap["calls"]["value"] == pytest.approx(.2)
     assert gap["random"]["ci95_low"] > 0 and gap["passed"]
-    equal = [row for row in saved["table_2"] if row["block"] == "equal budget"]
-    assert equal[0]["item"] == "nDCG@10 with 10 calls (gap budget)" and equal[0]["gap"] == 1
     assert (output / "figure_2.png").read_bytes().startswith(b"\x89PNG")
     assert (output / "figure_2.pdf").read_bytes().startswith(b"%PDF")
     for index in (1, 2):
@@ -134,3 +132,25 @@ def test_success_criterion_fails_when_the_rule_calls_too_often(config, run_dir, 
     assert gap["calls"]["value"] == pytest.approx(.6) and not gap["calls"]["passed"] and not gap["passed"]
     rows = list(csv.DictReader((run_dir / "report/test/table_2.csv").open()))
     assert next(row for row in rows if row["item"] == "LLM call fraction < 0.5")["gap"] == "0.600 no"
+
+
+def test_report_writes_russian_paper_files_without_repeating_the_figure(config, run_dir, offline_run):
+    prepare_report(config, run_dir, offline_run)
+    resplit(config, repeats=10, calibration_size=25)
+    report(config, repeats=100)
+    paper = run_dir / "report/test/ru"
+    assert (paper / "figure_2.png").read_bytes().startswith(b"\x89PNG") and (paper / "figure_2.pdf").read_bytes().startswith(b"%PDF")
+    with (paper / "table_1.csv").open(encoding="utf-8-sig") as file:
+        rows = list(csv.reader(file, delimiter=";"))
+    names = [row[0] for row in rows[1:]]
+    assert len(rows[0]) == 5 and "Монетка" not in " ".join(names) and "Оракул" not in " ".join(names)
+    assert names == ["Только поиск (dense)", "Только BERT", "Всегда LLM (120B)", "Каскад: правило по разрыву", "Каскад: мини-модель"]
+    gap = next(row for row in rows if row[0].startswith("Каскад: правило"))
+    assert gap[1] == "20,0" and "," in gap[3] and "." not in gap[3] and gap[3].startswith("+0,200")
+    llm = next(row for row in rows if row[0].startswith("Всегда"))
+    assert llm[3] == "—" and llm[4] == "—"
+    with (paper / "table_2.csv").open(encoding="utf-8-sig") as file:
+        rows = list(csv.reader(file, delimiter=";"))
+    assert {row[0] for row in rows[1:]} == {"Решения", "Устойчивость", "Сигнал", "Критерий успеха"}
+    assert all("бюджет" not in row[1] for row in rows[1:])
+    assert any(row[0] == "Критерий успеха" and row[2].endswith("да") for row in rows)
