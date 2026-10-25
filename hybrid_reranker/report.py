@@ -1,4 +1,6 @@
+import csv
 import json
+import re
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -8,21 +10,19 @@ from .controls import BUDGETS, arrays, budget_masks, controls, data_kind, load_p
 from .evaluate import complete_results, write_csv
 from .gate import gate_scores
 from .io import load_results, write_json
-from .metrics import answer_metrics, ranking_metrics
+from .metrics import ranking_metrics
 
 LABELS = {"dense": "Dense", "bert": "BERT", "llm": "Always LLM", "gap": "Gap rule",
           "gate": "Logistic gate", "random": "Random", "oracle": "Oracle"}
-FIELDS = ("ndcg@10", "both_in_top5", "em", "f1", "llm_fraction", "rerank_tokens", "answer_tokens", "llm_failed", "answer_failed")
+FIELDS = ("ndcg@10", "all_relevant_in_top5", "llm_fraction", "rerank_tokens", "llm_failed")
 
 
 def measurements(query, result):
     relevant = {doc_id for doc_id, score in query["qrels"].items() if score > 0}
-    answer = answer_metrics(result["answer"], query["answer"]) if "answer" in result else {"em": np.nan, "f1": np.nan}
     return [ranking_metrics(result["ranking"], query["qrels"])["ndcg@10"],
-            float(bool(relevant) and relevant <= set(result["ranking"][:5])), answer["em"], answer["f1"],
+            float(bool(relevant) and relevant <= set(result["ranking"][:5])),
             float(result["llm_called"]), result["rerank_usage"].get("total_tokens", 0),
-            result.get("answer_usage", {}).get("total_tokens", np.nan), float(result.get("llm_failed", False)),
-            float(result.get("answer_failed", False)) if "answer" in result else np.nan]
+            float(result.get("llm_failed", False))]
 
 
 def format_number(value):
@@ -42,43 +42,109 @@ def latex_table(path, caption, headers, rows):
     path.write_text("\n".join(lines) + "\n")
 
 
-def figure_2(summary, output, kind, split):
+TEXT = {
+    "en": {
+        "labels": LABELS, "random_suffix": " (expected)", "frozen": "{}, frozen threshold",
+        "bert": "BERT", "always": "Always LLM", "x": "Fraction of queries sent to LLM",
+        "y": "Change in nDCG@10 vs BERT", "panels": ("(a)", "(b)"), "helped": "LLM helped", "unchanged": "LLM unchanged",
+        "harmed": "LLM harmed", "gap_x": "BERT score gap", "gap_y": "Share of queries in the group",
+        "threshold": "threshold", "title": "{split}, n={n}",
+    },
+    "ru": {
+        "labels": {"dense": "Только поиск", "bert": "Кросс-энкодер", "llm": "Все запросы", "gap": "Правило",
+                   "gate": "Лог. регрессия", "random": "Случайный выбор", "oracle": "Оракул"},
+        "random_suffix": "", "frozen": "{}, порог",
+        "bert": "Кросс-энкодер", "always": "Все запросы", "x": "Доля обращений к LLM",
+        "y": "Прирост nDCG@10", "panels": ("а)", "б)"), "helped": "LLM помогла",
+        "unchanged": "Без изменений", "harmed": "LLM навредила", "gap_x": "Разрыв оценок",
+        "gap_y": "Доля в группе", "threshold": "порог", "title": None,
+    },
+}
+
+
+SERIES = {  # colour is a second cue: every series also has its own line style and marker, so a grey print still reads
+    "gap": ("#2a78d6", "-", "o"), "gate": ("#eb6834", "--", "s"), "random": ("#6b6b6b", ":", "^"), "oracle": ("#333333", "-.", "D")}
+OUTCOMES = (("helped", "#1a7f5a", "-"), ("unchanged", "#8a8a8a", "--"), ("harmed", "#d1495b", ":"))
+
+
+def figure_2(summary, output, kind, split, lang="en", name="figure_2", compact=False):
+    """Figure 2: budget curves (a) and the gap histogram by outcome (b); `compact` draws it at the printed size (1:1 fonts)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.ticker import PercentFormatter
 
-    styles = {"gap": ("-", "o"), "gate": ("--", "s"), "random": (":", "^"), "oracle": ("-.", "D")}
-    with plt.rc_context({"font.family": "DejaVu Sans", "font.size": 10}):
-        fig, ax = plt.subplots(figsize=(7.1, 3.8), layout="constrained")
-        for method, (style, marker) in styles.items():
-            rows = [row for row in summary["plot_curves"] if row["method"] == method]
+    text = TEXT[lang]
+    base, small, line, mark = (8.5, 7.2, 1.6, 4.2) if compact else (10.0, 7.5, 1.8, 5.5)
+    face = "white"
+    with plt.rc_context({"font.family": ["Times New Roman", "DejaVu Serif"] if compact else "DejaVu Sans", "font.size": base,
+                         "axes.edgecolor": "0.35", "axes.linewidth": 0.7, "xtick.color": "0.2", "ytick.color": "0.2"}):
+        panels = bool(summary.get("gaps")) and len(summary["gaps"]) == len(summary.get("gains", ()))
+        if panels:
+            size = (4.7, 2.75) if compact else (7.1, 3.5)
+            fig, (ax, bx) = plt.subplots(1, 2, figsize=size, layout="constrained", gridspec_kw={"width_ratios": [2.15, 1]})
+        else:
+            fig, ax = plt.subplots(figsize=(7.1, 3.8), layout="constrained")
+        full_gain = summary["llm_ndcg"] - summary["bert_ndcg"]
+        curves = {m: [row for row in summary["plot_curves"] if row["method"] == m] for m in SERIES}
+        if curves["gap"]:
+            xs = np.array([row["llm_fraction"] for row in curves["gap"]])
+            ys = np.array([row["gain_over_bert"] for row in curves["gap"]])
+            ax.fill_between(xs, ys, xs * full_gain, where=ys > xs * full_gain, color=SERIES["gap"][0], alpha=0.13, linewidth=0, zorder=1)
+        for method, (color, style, marker) in SERIES.items():
+            rows = curves[method]
             if rows:
                 marks = [index for index, row in enumerate(rows)
                          if any(abs(row["llm_fraction"] - budget) < 1e-9 for budget in BUDGETS)]
                 ax.plot([row["llm_fraction"] for row in rows], [row["gain_over_bert"] for row in rows],
-                        color="0.15", linestyle=style, marker=marker, markevery=marks, markerfacecolor="white",
-                        linewidth=1.4, markersize=5, label=LABELS[method] + (" (expected)" if method == "random" else ""))
-        ax.axhline(0, color="0.65", linewidth=0.7)
-        points = [("gap", summary["llm_fraction"], summary["rule_ndcg"], "o")]
+                        color=color, linestyle=style, marker=marker, markevery=marks, markerfacecolor=face,
+                        markeredgewidth=1.1, linewidth=line, markersize=mark, zorder=3,
+                        label=text["labels"][method] + (text["random_suffix"] if method == "random" else ""))
+        ax.axhline(0, color="0.7", linewidth=0.7, zorder=0)
+        points = [("gap", summary["llm_fraction"], summary["rule_ndcg"])]
         if summary.get("gate_ndcg") is not None:
-            points.append(("gate", summary["gate_fraction"], summary["gate_ndcg"], "s"))
-        for method, fraction, quality, marker in points:
-            ax.scatter([fraction], [quality - summary["bert_ndcg"]], marker=marker, color="black", s=45, zorder=6,
-                       label=f"{LABELS[method]}, frozen threshold")
-        full_gain = summary["llm_ndcg"] - summary["bert_ndcg"]
-        ax.scatter([0, 1], [0, full_gain], marker="*", color="black", s=85, zorder=5)
-        ax.annotate("BERT", (0, 0), xytext=(6, -14), textcoords="offset points", fontsize=9)
-        ax.annotate("Always LLM", (1, full_gain), xytext=(-8, 8), textcoords="offset points", ha="right", fontsize=9)
-        ax.set(xlim=(-.03, 1.03), xlabel="Fraction of queries sent to LLM", ylabel="Change in nDCG@10 vs BERT")
+            points.append(("gate", summary["gate_fraction"], summary["gate_ndcg"]))
+        for method, fraction, quality in points:
+            color, _, marker = SERIES[method]
+            ax.scatter([fraction], [quality - summary["bert_ndcg"]], marker=marker, color=color, edgecolor="white", linewidth=0.8,
+                       s=(34 if compact else 50), zorder=6, label=text["frozen"].format(text["labels"][method]))
+        ax.scatter([0, 1], [0, full_gain], marker="*", color="black", s=(60 if compact else 90), zorder=5)
+        ax.annotate(text["bert"], (0, 0), xytext=(6, -13), textcoords="offset points", fontsize=small + 0.5, color="0.15")
+        ax.annotate(text["always"], (1, full_gain), xytext=(-6, 14), textcoords="offset points", ha="right", fontsize=small + 0.5, color="0.15")
+        ax.set(xlim=(-.03, 1.03), xlabel=text["x"], ylabel=text["y"])
         ax.xaxis.set_major_formatter(PercentFormatter(1))
-        ax.grid(axis="y", color="0.9", linewidth=0.6)
+        ax.grid(axis="y", color="0.92", linewidth=0.6, zorder=0)
+        ax.set_axisbelow(True)
         ax.spines[["top", "right"]].set_visible(False)
         ax.margins(y=.15)
-        ax.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=3, frameon=False, fontsize=8)
-        fig.suptitle(f"{'МАКЕТ / MOCK — ' if kind == 'MOCK' else ''}{split}, n={summary['queries']}")
+        ax.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=2 if panels else 3, frameon=False, fontsize=small,
+                  handlelength=2.2, columnspacing=1.0, labelspacing=0.3)
+        if panels:
+            gaps, gains = np.asarray(summary["gaps"]), np.asarray(summary["gains"])
+            top = 8.0  # gaps of 8 or more share the last bin
+            edges = np.linspace(0, top, 13)
+            masks = {"helped": gains > 0, "unchanged": gains == 0, "harmed": gains < 0}
+            for name_, color, style in OUTCOMES:
+                mask = masks[name_]
+                if mask.any():
+                    weights = np.full(int(mask.sum()), 1 / mask.sum())
+                    bx.hist(np.clip(gaps[mask], 0, top - 1e-9), bins=edges, weights=weights, histtype="step", linestyle=style,
+                            color=color, linewidth=line, label=f"{text[name_]} (n={int(mask.sum())})")
+            bx.axvline(summary["threshold"], color="0.45", linewidth=1, linestyle="-.")
+            bx.annotate(text["threshold"], (summary["threshold"], bx.get_ylim()[1]), xytext=(3, -9), textcoords="offset points", fontsize=small, color="0.3")
+            bx.set(xlim=(0, top), xlabel=text["gap_x"], ylabel=text["gap_y"])
+            bx.set_xticks([0, 2, 4, 6, 8])
+            bx.grid(axis="y", color="0.92", linewidth=0.6)
+            bx.set_axisbelow(True)
+            bx.spines[["top", "right"]].set_visible(False)
+            bx.legend(loc="lower center", bbox_to_anchor=(.5, 1.01), ncols=1, frameon=False, fontsize=small, handlelength=2.2, labelspacing=0.3)
+            ax.text(0.01, 0.97, text["panels"][0], transform=ax.transAxes, fontsize=base + 1, fontweight="bold", va="top")
+            bx.text(0.97, 0.97, text["panels"][1], transform=bx.transAxes, fontsize=base + 1, fontweight="bold", va="top", ha="right")
+        title = text["title"]
+        if title or kind == "MOCK":
+            fig.suptitle(f"{'МАКЕТ / MOCK — ' if kind == 'MOCK' else ''}{title.format(split=split, n=summary['queries']) if title else ''}")
         for extension in ("png", "pdf"):
-            fig.savefig(output / f"figure_2.{extension}", dpi=220)
+            fig.savefig(output / f"{name}.{extension}", dpi=(400 if compact else 220))
         plt.close(fig)
 
 
@@ -104,6 +170,91 @@ def success_criteria(values, method, indices, tolerance):
     result["calls"] = {"value": fraction, "passed": fraction < .5, "text": f"{fraction:.3f} {'yes' if fraction < .5 else 'no'}"}
     result["passed"] = all(result[key]["passed"] for key, _ in CRITERIA)
     return result
+
+
+def ru_number(value, digits=3, sign=False):
+    """A number in Russian typography: decimal comma, real minus sign."""
+    return (f"{value:+.{digits}f}" if sign else f"{value:.{digits}f}").replace("-", "−").replace(".", ",")
+
+
+def ru_interval(low, high):
+    return f"[{ru_number(low, sign=True)}; {ru_number(high, sign=True)}]"
+
+
+def ru_text(value):
+    """A number-and-interval string written by the English report, rewritten with decimal commas."""
+    return re.sub(r"-(?=\d)", "−", str(value).replace(", ", "; ")).replace(".", ",")
+
+
+RU_METHODS = {"dense": "Только поиск", "bert": "Только кросс-энкодер", "llm": "Обращение ко всем запросам",
+              "gap": "Каскад: правило по разрыву", "gate": "Каскад: логистическая регрессия"}
+RU_DECISIONS = {"called / helped": "Позвали, LLM помогла", "called / unchanged": "Позвали, без изменений",
+                "called / harmed": "Позвали, LLM навредила", "skipped / helped": "Не позвали, LLM помогла бы",
+                "skipped / unchanged": "Не позвали, без изменений", "skipped / harmed": "Не позвали, LLM навредила бы"}
+RU_STABILITY = {"threshold": "Порог разрыва: медиана [5%; 95%]", "calibration_fraction": "Доля вызовов на калибровочной части",
+                "check_fraction": "Доля вызовов на проверочной части", "difference_vs_llm": "Разность с обращением ко всем запросам"}
+RU_CRITERIA = {"loss": "Потеря nDCG@10 относительно обращения ко всем запросам не больше допуска: разность [интервал 95 %]",
+               "calls": "Доля обращений меньше 0,5",
+               "random": "Выигрыш над случайным выбором при той же доле обращений: разность [интервал 95 %]"}
+
+
+def write_ru_csv(path, header, rows):
+    with path.open("w", newline="", encoding="utf-8-sig") as file:
+        writer = csv.writer(file, delimiter=";")
+        writer.writerow(header)
+        writer.writerows(rows)
+
+
+def paper_outputs(directory, table, diagnostics, criteria, summary, kind, split):
+    """Figure 2 and the two tables as they go into the Russian article: no repeat of what the figure shows.
+
+    Table 1 keeps what Figure 2 cannot show (call share, tokens, confidence intervals of differences, dense); the random
+    and oracle rows are lines of the figure. Files use ';' and a decimal comma so they paste into a Word table.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    figure_2(summary, directory, kind, split, lang="ru")
+    figure_2(summary, directory, kind, split, lang="ru", name="figure_2_paper", compact=True)
+    by_method = {row["method"]: row for row in table}
+    rows = []
+    for method in RU_METHODS:
+        if method not in by_method:
+            continue
+        row = by_method[method]
+        versus_llm = "—" if method == "llm" else (
+            f"{ru_number(row['difference_vs_llm'], sign=True)} {ru_interval(row['difference_ci95_low'], row['difference_ci95_high'])}")
+        versus_random = "—"
+        if method in criteria:
+            random = criteria[method]["random"]
+            versus_random = f"{ru_number(random['value'], sign=True)} {ru_interval(random['ci95_low'], random['ci95_high'])}"
+        rows.append([RU_METHODS[method], ru_number(100 * row["llm_fraction"], 1), f"{row['rerank_tokens']:.0f}", versus_llm, versus_random])
+    write_ru_csv(directory / "table_1.csv", [
+        "Метод", "Доля обращений, %", "Токенов на утверждение", "Разность nDCG@10 с обращением ко всем запросам [интервал 95 %]",
+        "Разность nDCG@10 со случайным выбором при той же доле обращений [интервал 95 %]"], rows)
+    rows = []
+    for row in diagnostics:
+        block, item, gap, gate = row["block"], row["item"], row["gap"], row["gate"]
+        if block == "decisions":
+            rows.append(["Решения", RU_DECISIONS.get(item, item), gap, gate])
+        elif block == "stability":
+            name = item.split(":")[0]
+            rows.append(["Устойчивость", RU_STABILITY.get(name, item), ru_text(gap) if gap is not None else None, None])
+        elif block == "signal":
+            label = ("ROC-AUC (площадь под ROC-кривой): польза LLM" if item.startswith("AUC") else
+                     "Доля утверждений, где LLM помогла" if item.startswith("Positive") else
+                     "ROC-AUC логистической регрессии на отложенных частях проверки")
+            rows.append(["Сигнал", label, *(ru_number(v) if v is not None else "—" for v in (gap, gate))])
+    for key in ("loss", "calls", "random"):
+        cells = []
+        for method in ("gap", "gate"):
+            result = criteria.get(method, {}).get(key)
+            if result is None:
+                cells.append("—")
+                continue
+            verdict = "да" if result["passed"] else "нет"
+            cells.append(f"{ru_number(100 * result['value'], 1)} %, {verdict}" if key == "calls" else
+                         f"{ru_number(result['value'], sign=True)} {ru_interval(result['ci95_low'], result['ci95_high'])}, {verdict}")
+        rows.append(["Критерий успеха", RU_CRITERIA[key], *cells])
+    write_ru_csv(directory / "table_2.csv", ["Блок", "Показатель", "Правило по разрыву", "Логистическая регрессия"], rows)
 
 
 def live_gap_mismatches(run_dir, split, rows, gap_selected):
@@ -196,13 +347,6 @@ def report(config, split="test", repeats=1000, mock=False):
     else:
         diagnostics.append({"data_kind": kind, "block": "stability", "item": "Not computed; run rerank resplit",
                             "gap": None, "gate": None})
-    budgets = [("gap", int(gap_selected.sum()))] + ([("gate", int(weights["gate"].sum()))] if gate_model else [])
-    for name, count in budgets:
-        diagnostics.append({
-            "data_kind": kind, "block": "equal budget", "item": f"nDCG@10 with {count} calls ({name} budget)",
-            "gap": float(np.where(budget_masks(-gaps, count), llm, bert).mean()),
-            "gate": float(np.where(budget_masks(-signals, count), llm, bert).mean()) if gate_model else None,
-        })
     min_gain = gate_model["min_gain"] if gate_model else 0.0
     diagnostics.extend([
         {"data_kind": kind, "block": "signal", "item": f"AUC: gap gain>0, gate gain>{min_gain:g}",
@@ -225,8 +369,8 @@ def report(config, split="test", repeats=1000, mock=False):
     write_csv(output / "table_2.csv", diagnostics)
     marker = "MOCK. " if kind == "MOCK" else ""
     latex_table(output / "table_1.tex", marker + "Saved ranking results; intervals: paired query bootstrap, 95%. Gap and gate use their own "
-                "frozen thresholds, so their call fractions differ; Table 2 compares them at equal budgets.",
-                ["Method", "nDCG@10 [95%]", "Delta vs LLM [95%]", "Both@5", "EM", "F1", "Call frac.", "120B tok/q", "20B tok/q", "120B fail", "20B fail"], [
+                "frozen thresholds, so their call fractions differ.",
+                ["Method", "nDCG@10 [95%]", "Delta vs LLM [95%]", "All rel. in top 5", "Call frac.", "120B tok/q", "120B fail"], [
                     [LABELS[row["method"]], f"{row['ndcg@10']:.3f} [{row['ndcg_ci95_low']:.3f}, {row['ndcg_ci95_high']:.3f}]",
                      f"{row['difference_vs_llm']:.3f} [{row['difference_ci95_low']:.3f}, {row['difference_ci95_high']:.3f}]",
                      *[format_number(row[key]) for key in FIELDS[1:]]] for row in table])
@@ -236,8 +380,7 @@ def report(config, split="test", repeats=1000, mock=False):
     write_json(output / "report.json", {
         "data_kind": kind, "split": split, "gate_min_gain": gate_model["min_gain"] if gate_model else None, "table_1": table, "table_2": diagnostics,
         "live_cascade_gap_mismatches": live, "success_criteria": criteria,
-        "notes": ["Missing saved answers are left blank, never generated or estimated.",
-                  ("Gap and gate rows are rebuilt from saved bert/llm results; live_cascade_gap_mismatches counts "
+        "notes": [("Gap and gate rows are rebuilt from saved bert/llm results; live_cascade_gap_mismatches counts "
                    "queries where a saved cascade_gap run ranked differently (null when there is no such run)."),
                   "Random uses the empirical inclusion weights of the fixed-seed draws at the frozen gap budget.",
                   "Oracle uses exactly the same number of calls as the frozen gap rule.",
@@ -245,4 +388,5 @@ def report(config, split="test", repeats=1000, mock=False):
                   "Figure 2 shows budget curves; repeated fixed-threshold splits do not define curve confidence bands."],
     })
     figure_2(summary, output, kind, split)
+    paper_outputs(output / "ru", table, diagnostics, criteria, summary, kind, split)
     print(f"{kind}: figure 2 and tables 1-2 saved to {output}")

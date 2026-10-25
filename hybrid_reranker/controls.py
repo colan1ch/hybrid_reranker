@@ -103,15 +103,28 @@ def effect(gain):
     return "helped" if gain > 0 else "harmed" if gain < 0 else "unchanged"
 
 
-def cases(rows, gains, gap_selected, gate_selected, gate_probability, kind):
-    """One row per question, decisions that lost quality first, for reading the errors by hand."""
+def gold_ranks(result, gold):
+    """1-based positions of the relevant documents in a ranking of the candidates, '-' for one that was not retrieved."""
+    position = {doc_id: index for index, doc_id in enumerate(result["ranking"], 1)}
+    return " ".join(str(position.get(doc_id, "-")) for doc_id in gold)
+
+
+def cases(rows, gains, gap_selected, gate_selected, gate_probability, kind, titles_by_id=None):
+    """One row per question, decisions that lost quality first, for reading the errors by hand.
+
+    gold_titles lists the relevant documents (a title not found among any retrieved candidates is marked); gold_rank_*
+    gives the position of each of them in the BERT and in the 120B ranking, in the same order ("-" = not among this claim's top-20).
+    """
+    titles_by_id = titles_by_id or {}
     table = []
     for index, row in enumerate(rows):
-        gold = sorted({fact["title"] for fact in row["query"].get("supporting_facts", [])})
+        gold = sorted(doc_id for doc_id, score in row["query"]["qrels"].items() if score > 0)
         called = bool(gap_selected[index])
         table.append({
-            "data_kind": kind, "id": row["id"], "question": row["query"]["question"], "answer": row["query"].get("answer"),
-            "gold_titles": " | ".join(gold), "bert_gap": row["bert"]["gap"],
+            "data_kind": kind, "id": row["id"], "question": row["query"]["question"],
+            "gold_titles": " | ".join(titles_by_id.get(doc_id, f"[title unknown] {doc_id}") for doc_id in gold),
+            "gold_rank_bert": gold_ranks(row["bert"], gold), "gold_rank_llm": gold_ranks(row["llm"], gold),
+            "bert_gap": row["bert"]["gap"],
             "gate_probability": None if gate_probability is None else float(gate_probability[index]),
             "bert_ndcg": row["bert_ndcg"], "llm_ndcg": row["llm_ndcg"], "llm_gain": float(gains[index]),
             "llm_effect": effect(gains[index]), "gap_called": called,
@@ -185,6 +198,7 @@ def controls(config, split="test", repeats=1000, mock=False):
         "data_kind": kind, "split": split, "queries": len(rows), "seed": config["seed"], "random_repeats": repeats,
         "bert_ndcg": float(bert.mean()), "llm_ndcg": float(llm.mean()), "auc_gap": auc(gains > 0, -gaps),
         "gate_available": "gate" in scores, "threshold": threshold, "llm_fraction": count / len(rows),
+        "gaps": gaps.tolist(), "gains": gains.tolist(),
         "rule_ndcg": quality, "random_ndcg": random["ndcg@10"], "oracle_ndcg": oracle_quality,
         "random_inclusion": random["inclusion"],
         "retained_gain": (quality - bert.mean()) / improvement if improvement else None,
@@ -206,6 +220,7 @@ def controls(config, split="test", repeats=1000, mock=False):
     output.mkdir(exist_ok=True)
     write_csv(output / f"{split}.curves.csv", curves)
     write_csv(output / f"{split}.decisions.csv", matrix)
-    write_csv(output / f"{split}.cases.csv", cases(rows, gains, selected, gate_selected, scores.get("gate"), kind))
+    titles_by_id = {doc["id"]: doc["title"] for row in read_jsonl(run_dir / "candidates.jsonl") for doc in row["documents"]}
+    write_csv(output / f"{split}.cases.csv", cases(rows, gains, selected, gate_selected, scores.get("gate"), kind, titles_by_id))
     write_json(output / f"{split}.json", {**summary, "curves": curves, "plot_curves": plot_curves, "decisions": matrix})
     print(f"{kind}: {len(rows)} queries, gap AUC={summary['auc_gap']}, saved {output}")
