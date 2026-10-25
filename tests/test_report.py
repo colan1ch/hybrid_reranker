@@ -144,7 +144,7 @@ def test_report_writes_russian_paper_files_without_repeating_the_figure(config, 
         rows = list(csv.reader(file, delimiter=";"))
     names = [row[0] for row in rows[1:]]
     assert len(rows[0]) == 5 and "Случайный" not in " ".join(names) and "Оракул" not in " ".join(names)
-    assert names == ["Только поиск", "Только кросс-энкодер", "Обращение ко всем запросам", "Каскад: правило по разрыву", "Каскад: мини-модель"]
+    assert names == ["Только поиск", "Только кросс-энкодер", "Обращение ко всем запросам", "Каскад: правило по разрыву", "Каскад: логистическая регрессия"]
     gap = next(row for row in rows if row[0].startswith("Каскад: правило"))
     assert gap[1] == "20,0" and "," in gap[3] and "." not in gap[3] and gap[3].startswith("+0,200")
     llm = next(row for row in rows if row[0].startswith("Обращение"))

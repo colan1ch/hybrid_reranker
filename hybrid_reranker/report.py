@@ -52,11 +52,11 @@ TEXT = {
     },
     "ru": {
         "labels": {"dense": "Только поиск", "bert": "Кросс-энкодер", "llm": "Все запросы", "gap": "Правило",
-                   "gate": "Мини-модель", "random": "Случайный выбор", "oracle": "Оракул"},
+                   "gate": "Лог. регрессия", "random": "Случайный выбор", "oracle": "Оракул"},
         "random_suffix": "", "frozen": "{}, порог",
-        "bert": "Кросс-энкодер", "always": "Все запросы", "x": "Доля обращений к большой модели",
-        "y": "Прирост nDCG@10", "panels": ("а)", "б)"), "helped": "Модель помогла",
-        "unchanged": "Без изменений", "harmed": "Модель навредила", "gap_x": "Разрыв оценок",
+        "bert": "Кросс-энкодер", "always": "Все запросы", "x": "Доля обращений к LLM",
+        "y": "Прирост nDCG@10", "panels": ("а)", "б)"), "helped": "LLM помогла",
+        "unchanged": "Без изменений", "harmed": "LLM навредила", "gap_x": "Разрыв оценок",
         "gap_y": "Доля в группе", "threshold": "порог", "title": None,
     },
 }
@@ -187,10 +187,10 @@ def ru_text(value):
 
 
 RU_METHODS = {"dense": "Только поиск", "bert": "Только кросс-энкодер", "llm": "Обращение ко всем запросам",
-              "gap": "Каскад: правило по разрыву", "gate": "Каскад: мини-модель"}
-RU_DECISIONS = {"called / helped": "Позвали, модель помогла", "called / unchanged": "Позвали, без изменений",
-                "called / harmed": "Позвали, модель навредила", "skipped / helped": "Не позвали, модель помогла бы",
-                "skipped / unchanged": "Не позвали, без изменений", "skipped / harmed": "Не позвали, модель навредила бы"}
+              "gap": "Каскад: правило по разрыву", "gate": "Каскад: логистическая регрессия"}
+RU_DECISIONS = {"called / helped": "Позвали, LLM помогла", "called / unchanged": "Позвали, без изменений",
+                "called / harmed": "Позвали, LLM навредила", "skipped / helped": "Не позвали, LLM помогла бы",
+                "skipped / unchanged": "Не позвали, без изменений", "skipped / harmed": "Не позвали, LLM навредила бы"}
 RU_STABILITY = {"threshold": "Порог разрыва: медиана [5%; 95%]", "calibration_fraction": "Доля вызовов на калибровочной части",
                 "check_fraction": "Доля вызовов на проверочной части", "difference_vs_llm": "Разность с обращением ко всем запросам"}
 RU_CRITERIA = {"loss": "Потеря nDCG@10 относительно обращения ко всем запросам не больше допуска: разность [интервал 95 %]",
@@ -239,9 +239,9 @@ def paper_outputs(directory, table, diagnostics, criteria, summary, kind, split)
             name = item.split(":")[0]
             rows.append(["Устойчивость", RU_STABILITY.get(name, item), ru_text(gap) if gap is not None else None, None])
         elif block == "signal":
-            label = ("AUC (площадь под ROC-кривой): польза большой модели" if item.startswith("AUC") else
-                     "Доля утверждений, где большая модель помогла" if item.startswith("Positive") else
-                     "AUC мини-модели на отложенных частях проверки")
+            label = ("ROC-AUC (площадь под ROC-кривой): польза LLM" if item.startswith("AUC") else
+                     "Доля утверждений, где LLM помогла" if item.startswith("Positive") else
+                     "ROC-AUC логистической регрессии на отложенных частях проверки")
             rows.append(["Сигнал", label, *(ru_number(v) if v is not None else "—" for v in (gap, gate))])
     for key in ("loss", "calls", "random"):
         cells = []
@@ -254,7 +254,7 @@ def paper_outputs(directory, table, diagnostics, criteria, summary, kind, split)
             cells.append(f"{ru_number(100 * result['value'], 1)} %, {verdict}" if key == "calls" else
                          f"{ru_number(result['value'], sign=True)} {ru_interval(result['ci95_low'], result['ci95_high'])}, {verdict}")
         rows.append(["Критерий успеха", RU_CRITERIA[key], *cells])
-    write_ru_csv(directory / "table_2.csv", ["Блок", "Показатель", "Правило по разрыву", "Мини-модель"], rows)
+    write_ru_csv(directory / "table_2.csv", ["Блок", "Показатель", "Правило по разрыву", "Логистическая регрессия"], rows)
 
 
 def live_gap_mismatches(run_dir, split, rows, gap_selected):
